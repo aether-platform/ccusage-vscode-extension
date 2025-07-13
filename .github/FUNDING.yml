@@ -1,0 +1,8 @@
+# GitHub Sponsors configuration for Organization
+github: [aether-platform]
+
+# Alternative funding platforms
+ko_fi: aether-platform
+patreon: aether-platform
+open_collective: aether-platform
+custom: ['https://paypal.me/aetherplatform', 'https://opencollective.com/aether-platform']

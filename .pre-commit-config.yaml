@@ -19,21 +19,21 @@ repos:
     hooks:
       - id: eslint
         name: ESLint
-        entry: pnpm exec eslint
+        entry: npx eslint
         language: system
         files: \.(ts|js)$
         args: [--fix]
 
       - id: typescript-check
         name: TypeScript Check
-        entry: pnpm exec tsc
+        entry: npx tsc
         language: system
         files: \.(ts)$
         args: [--noEmit]
 
       - id: prettier
         name: Prettier
-        entry: pnpm exec prettier
+        entry: npx prettier
         language: system
         files: \.(ts|js|json|md)$
         args: [--write]

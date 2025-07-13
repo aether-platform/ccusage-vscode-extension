@@ -27,6 +27,10 @@ export interface UsageStats {
     start: string;
     end: string;
   };
+  averageTokensPerSession?: number;
+  medianTokensPerSession?: number;
+  averageCostPerSession?: number;
+  medianCostPerSession?: number;
 }
 
 export interface SessionData {
@@ -44,6 +48,13 @@ export interface DailyReport {
   date: string;
   stats: UsageStats;
   sessions: SessionData[];
+}
+
+export interface WeeklyReport {
+  weekStart: string;
+  weekEnd: string;
+  stats: UsageStats;
+  dailyBreakdown: DailyReport[];
 }
 
 export interface MonthlyReport {

@@ -82,30 +82,76 @@ export class HostResolver {
     const config = vscode.workspace.getConfiguration('ccusage');
     const wslDistro = config.get<string>('wslDistribution', 'Ubuntu');
     
-    // For WSL, we need to access Windows home directory
-    const windowsHomePaths = [
-      `/mnt/c/Users/${process.env.USERNAME || process.env.USER}`,
-      `/mnt/c/Users/${os.userInfo().username}`
-    ];
-    
     const claudePaths: string[] = [];
     
-    for (const homePath of windowsHomePaths) {
-      if (fs.existsSync(homePath)) {
-        claudePaths.push(
-          path.join(homePath, '.claude', 'projects'),
-          path.join(homePath, '.config', 'claude', 'projects')
-        );
-        break;
+    // Try to find Windows user directories
+    try {
+      const windowsUserDir = '/mnt/c/Users';
+      if (fs.existsSync(windowsUserDir)) {
+        const userDirs = fs.readdirSync(windowsUserDir, { withFileTypes: true })
+          .filter(dirent => dirent.isDirectory() && !dirent.name.startsWith('.'))
+          .filter(dirent => !['Default', 'Public', 'All Users'].includes(dirent.name))
+          .map(dirent => dirent.name);
+        
+        // Check each user directory for Claude data
+        for (const userDir of userDirs) {
+          const userPath = path.join(windowsUserDir, userDir);
+          const candidatePaths = [
+            path.join(userPath, '.claude', 'projects'),
+            path.join(userPath, '.config', 'claude', 'projects'),
+            path.join(userPath, 'AppData', 'Roaming', 'claude', 'projects'),
+            path.join(userPath, 'AppData', 'Local', 'claude', 'projects')
+          ];
+          
+          for (const candidatePath of candidatePaths) {
+            if (fs.existsSync(candidatePath)) {
+              claudePaths.push(candidatePath);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Could not access Windows user directories:', error);
+    }
+    
+    // Also check specific environment-based paths
+    const manualUsername = config.get<string>('wslWindowsUsername');
+    const envBasedPaths = [
+      process.env.USERPROFILE,
+      manualUsername ? `/mnt/c/Users/${manualUsername}` : null,
+      process.env.USERNAME ? `/mnt/c/Users/${process.env.USERNAME}` : null,
+      process.env.USER ? `/mnt/c/Users/${process.env.USER}` : null,
+    ].filter(Boolean) as string[];
+    
+    for (const basePath of envBasedPaths) {
+      if (basePath && fs.existsSync(basePath)) {
+        const candidatePaths = [
+          path.join(basePath, '.claude', 'projects'),
+          path.join(basePath, '.config', 'claude', 'projects'),
+          path.join(basePath, 'AppData', 'Roaming', 'claude', 'projects'),
+          path.join(basePath, 'AppData', 'Local', 'claude', 'projects')
+        ];
+        
+        for (const candidatePath of candidatePaths) {
+          if (fs.existsSync(candidatePath) && !claudePaths.includes(candidatePath)) {
+            claudePaths.push(candidatePath);
+          }
+        }
       }
     }
     
-    // Also check Linux home directory in WSL
+    // Check Linux home directory in WSL
     const linuxHome = os.homedir();
-    claudePaths.push(
+    const linuxPaths = [
       path.join(linuxHome, '.claude', 'projects'),
       path.join(linuxHome, '.config', 'claude', 'projects')
-    );
+    ];
+    
+    for (const linuxPath of linuxPaths) {
+      if (!claudePaths.includes(linuxPath)) {
+        claudePaths.push(linuxPath);
+      }
+    }
     
     return {
       type: 'wsl',
@@ -185,14 +231,29 @@ export class HostResolver {
     const environment = await this.resolveExecutionHost();
     const validPaths = await this.validateClaudePaths(environment);
     
+    // Additional WSL-specific information
+    let additionalInfo = '';
+    if (environment.type === 'wsl') {
+      const wslInfo = [
+        `WSL Distribution: ${process.env.WSL_DISTRO_NAME || 'Unknown'}`,
+        `Linux Home: ${require('os').homedir()}`,
+        `Windows Users accessible: ${require('fs').existsSync('/mnt/c/Users') ? 'Yes' : 'No'}`
+      ];
+      additionalInfo = '\n\nWSL Details:\n' + wslInfo.map(info => `  ${info}`).join('\n');
+    }
+    
     const statusMessage = [
-      `Environment: ${environment.type}`,
-      `Valid Claude paths: ${validPaths.length}`,
-      ...validPaths.map(p => `  - ${p}`)
+      `Environment: ${environment.type.toUpperCase()}`,
+      `Valid Claude paths found: ${validPaths.length}`,
+      '',
+      'Searched paths:',
+      ...environment.claudePaths.map(p => `  ${validPaths.includes(p) ? '✅' : '❌'} ${p}`),
+      additionalInfo
     ].join('\n');
     
     vscode.window.showInformationMessage(
-      `Claude Usage Tracker Environment:\n${statusMessage}`,
+      `Claude Usage Tracker Environment Status:\n${statusMessage}`,
+      { modal: true },
       'OK'
     );
   }

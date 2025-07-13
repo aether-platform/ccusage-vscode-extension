@@ -37,13 +37,13 @@ A comprehensive VSCode extension that provides real-time tracking and analytics 
 
 ### From Source
 1. Clone this repository
-2. Run `pnpm install` to install dependencies
-3. Run `pnpm run compile` to build the extension
+2. Run `npm install` to install dependencies
+3. Run `npm run compile` to build the extension
 4. Press `F5` to run the extension in a new Extension Development Host window
 
 ### Packaging
 ```bash
-pnpm install -g vsce
+npm install -g @vscode/vsce
 vsce package
 ```
 
@@ -54,14 +54,34 @@ The extension automatically detects Claude projects directories, but you can con
 ### Settings
 
 - **`ccusage.claudeProjectsPath`**: Custom path to Claude projects directory
+- **`ccusage.executionHost`**: Execution environment (`auto`, `local`, `wsl`, `container`)
+- **`ccusage.wslDistribution`**: WSL distribution name (default: "Ubuntu")
+- **`ccusage.wslWindowsUsername`**: Windows username for WSL environment (auto-detected if empty)
+- **`ccusage.containerWorkspaceFolder`**: Workspace folder path in container
 - **`ccusage.refreshInterval`**: Refresh interval for live monitoring (default: 5000ms)
 - **`ccusage.showStatusBar`**: Show/hide usage stats in status bar (default: true)
 
 ### Auto-detection
 
 The extension automatically searches for Claude projects in:
+
+**Local Environment:**
 - `~/.claude/projects/`
 - `~/.config/claude/projects/`
+
+**WSL Environment:**
+- `/mnt/c/Users/{username}/.claude/projects/`
+- `/mnt/c/Users/{username}/.config/claude/projects/`
+- `/mnt/c/Users/{username}/AppData/Roaming/claude/projects/`
+- `/mnt/c/Users/{username}/AppData/Local/claude/projects/`
+- `~/.claude/projects/` (Linux home)
+- `~/.config/claude/projects/` (Linux home)
+
+**Remote Container:**
+- `/workspace/.claude/projects/`
+- `/app/.claude/projects/`
+- `/home/vscode/.claude/projects/`
+- `{workspaceFolder}/.claude/projects/`
 
 ## Usage
 
@@ -126,6 +146,50 @@ The extension monitors JSONL transcript files from Claude Code, processing:
 3. **Analytics**: Calculate usage statistics and costs
 4. **Visualization**: Display data in WebView dashboards
 5. **Real-time Updates**: Automatically refresh as new data arrives
+
+## Troubleshooting
+
+### WSL Environment Issues
+
+If Claude Code data is not detected in WSL:
+
+1. **Check Environment Detection**
+   - Use `Claude Usage: Show Environment Status` command
+   - Verify it detects WSL environment correctly
+
+2. **Manual Configuration**
+   - Set `ccusage.wslWindowsUsername` to your Windows username
+   - Example: `"ccusage.wslWindowsUsername": "YourUsername"`
+
+3. **Verify Windows User Directory Access**
+   - Check if `/mnt/c/Users/{YourUsername}` is accessible
+   - Ensure Windows filesystem is mounted properly
+
+4. **Custom Path Configuration**
+   - Set `ccusage.claudeProjectsPath` to exact path
+   - Example: `"/mnt/c/Users/YourName/.claude/projects"`
+
+### Remote Container Issues
+
+If data is not found in containers:
+
+1. **Mount Claude Data Directory**
+   - Add volume mount in `devcontainer.json`:
+   ```json
+   "mounts": [
+     "source=${localEnv:HOME}/.claude,target=/workspace/.claude,type=bind"
+   ]
+   ```
+
+2. **Configure Workspace Folder**
+   - Set `ccusage.containerWorkspaceFolder` setting
+   - Point to mounted Claude data location
+
+### General Issues
+
+- Use `Claude Usage: Show Environment Status` for diagnostic information
+- Check VSCode Developer Console for error messages
+- Verify Claude Code is generating transcript files
 
 ## Contributing
 

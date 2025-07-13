@@ -15,13 +15,29 @@ export class JSONLParser {
         if (!line.trim()) continue;
         
         try {
-          const entry = JSON.parse(line) as ClaudeTranscriptEntry;
-          const entryId = this.generateEntryId(entry);
+          const rawEntry = JSON.parse(line);
           
-          // Global deduplication
-          if (!this.processedEntries.has(entryId)) {
-            this.processedEntries.add(entryId);
-            entries.push(entry);
+          // Convert Claude Code JSONL format to our format
+          if (rawEntry.message && rawEntry.sessionId && rawEntry.uuid && rawEntry.timestamp) {
+            const entry: ClaudeTranscriptEntry = {
+              timestamp: rawEntry.timestamp,
+              conversation_id: rawEntry.sessionId,
+              turn_id: rawEntry.uuid,
+              role: rawEntry.message.role || 'user',
+              model: rawEntry.message.model || 'unknown',
+              content: typeof rawEntry.message.content === 'string' ? rawEntry.message.content : JSON.stringify(rawEntry.message.content),
+              usage: rawEntry.message.usage,
+              project_name: this.extractProjectName(rawEntry.cwd),
+              project_id: rawEntry.sessionId
+            };
+            
+            const entryId = this.generateEntryId(entry);
+            
+            // Global deduplication
+            if (!this.processedEntries.has(entryId)) {
+              this.processedEntries.add(entryId);
+              entries.push(entry);
+            }
           }
         } catch (parseError) {
           console.warn(`Failed to parse line in ${filePath}:`, line);
@@ -70,6 +86,11 @@ export class JSONLParser {
 
   private generateEntryId(entry: ClaudeTranscriptEntry): string {
     return `${entry.conversation_id}-${entry.turn_id}-${entry.timestamp}`;
+  }
+
+  private extractProjectName(cwd: string): string {
+    if (!cwd) return 'Unknown Project';
+    return cwd.split('/').pop() || 'Unknown Project';
   }
 
   clearCache(): void {

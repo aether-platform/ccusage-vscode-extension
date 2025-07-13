@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Usage Tracker - VSCode Extension</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/svg+xml" href="claude-logo.svg">
+</head>
+<body>
+    <header class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <div class="logo">
+                    <img src="claude-logo.svg" alt="Claude Logo" width="64" height="64">
+                    <h1>Claude Code Usage Tracker</h1>
+                </div>
+                <p class="tagline">VSCode拡張機能でClaude Codeの使用量とコストをリアルタイム追跡</p>
+                <div class="hero-buttons">
+                    <a href="https://github.com/aether-platform/ccusage-ext" class="btn btn-primary">
+                        📦 GitHub
+                    </a>
+                    <a href="https://marketplace.visualstudio.com/items?itemName=aether-platform.ccusage-ext" class="btn btn-secondary">
+                        🛒 VS Code Marketplace
+                    </a>
+                    <a href="#sponsor" class="btn btn-sponsor">
+                        ❤️ スポンサーになる
+                    </a>
+                </div>
+            </div>
+            <div class="hero-image">
+                <img src="screenshot-dashboard.png" alt="Dashboard Screenshot" class="screenshot">
+            </div>
+        </div>
+    </header>
+
+    <section class="features">
+        <div class="container">
+            <h2>主な機能</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>リアルタイム追跡</h3>
+                    <p>Claude Codeの会話をリアルタイムで監視し、トークン使用量とコストを自動計算</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💰</div>
+                    <h3>詳細なコスト分析</h3>
+                    <p>Input/Output/Cache別のトークン数と、各Claudeモデルの正確なコスト計算</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📈</div>
+                    <h3>包括的な分析</h3>
+                    <p>日次・週次・月次レポートと利用傾向の分析、$300プランの価値評価</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔍</div>
+                    <h3>セッション分析</h3>
+                    <p>プロジェクト別の使用量、個別会話の詳細追跡、効率性の可視化</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>高性能</h3>
+                    <p>効率的なファイル監視、低リソース使用、大量JSONLファイルの高速解析</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🛠️</div>
+                    <h3>環境対応</h3>
+                    <p>Local/WSL/Container環境の自動検出、カスタム設定対応</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="demo">
+        <div class="container">
+            <h2>スクリーンショット</h2>
+            <div class="screenshots">
+                <div class="screenshot-item">
+                    <img src="screenshot-dashboard.png" alt="メインダッシュボード">
+                    <h3>メインダッシュボード</h3>
+                    <p>今日の利用状況と全体統計を一目で確認</p>
+                </div>
+                <div class="screenshot-item">
+                    <img src="screenshot-insights.png" alt="利用状況分析">
+                    <h3>利用状況分析</h3>
+                    <p>月間平均との比較と$300プランの価値評価</p>
+                </div>
+                <div class="screenshot-item">
+                    <img src="screenshot-reports.png" alt="詳細レポート">
+                    <h3>詳細レポート</h3>
+                    <p>日次・週次・月次の詳細な使用量レポート</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="installation">
+        <div class="container">
+            <h2>インストール方法</h2>
+            <div class="install-steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>VS Code Marketplaceからインストール</h3>
+                        <p>VS Code内で「Claude Code Usage Tracker」を検索してインストール</p>
+                        <code>ext install your-publisher.ccusage-ext</code>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>自動検出</h3>
+                        <p>拡張機能がClaude Codeのプロジェクトディレクトリを自動検出</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>ダッシュボードを開く</h3>
+                        <p>コマンドパレット（Ctrl+Shift+P）から「Claude Usage: Show Usage Dashboard」を実行</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="sponsor" class="sponsor">
+        <div class="container">
+            <h2>プロジェクトを支援</h2>
+            <p class="sponsor-description">
+                このプロジェクトが役立ったら、開発継続のためのスポンサーシップをご検討ください。<br>
+                皆様のサポートが新機能開発とメンテナンスを可能にします。
+            </p>
+            <div class="sponsor-tiers">
+                <div class="tier">
+                    <h3>☕ コーヒースポンサー</h3>
+                    <div class="price">$5/月</div>
+                    <ul>
+                        <li>開発者への感謝</li>
+                        <li>スポンサーバッジ</li>
+                        <li>プロジェクトの継続支援</li>
+                    </ul>
+                </div>
+                <div class="tier featured">
+                    <h3>🚀 アクティブサポーター</h3>
+                    <div class="price">$25/月</div>
+                    <ul>
+                        <li>優先的な機能リクエスト対応</li>
+                        <li>バグ修正の優先サポート</li>
+                        <li>新機能の早期アクセス</li>
+                        <li>専用サポートチャンネル</li>
+                    </ul>
+                </div>
+                <div class="tier">
+                    <h3>🏢 ビジネススポンサー</h3>
+                    <div class="price">$100/月</div>
+                    <ul>
+                        <li>カスタム機能開発</li>
+                        <li>企業ロゴ掲載</li>
+                        <li>専用サポート</li>
+                        <li>コンサルティング</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="sponsor-buttons">
+                <a href="https://github.com/sponsors/aether-platform" class="btn btn-sponsor-large">
+                    ❤️ GitHub Sponsorsで支援
+                </a>
+                <a href="https://opencollective.com/aether-platform" class="btn btn-secondary">
+                    🌍 Open Collectiveで支援
+                </a>
+                <a href="https://ko-fi.com/aether-platform" class="btn btn-secondary">
+                    ☕ Ko-fiで支援
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section class="usage">
+        <div class="container">
+            <h2>使用方法</h2>
+            <div class="usage-grid">
+                <div class="usage-item">
+                    <h3>📊 メインダッシュボード</h3>
+                    <p>今日の利用状況、全体統計、利用状況分析を表示</p>
+                    <code>Ctrl+Shift+P → "Claude Usage: Show Usage Dashboard"</code>
+                </div>
+                <div class="usage-item">
+                    <h3>📅 日次レポート</h3>
+                    <p>指定日の詳細な使用量とセッション情報</p>
+                    <code>Ctrl+Shift+P → "Claude Usage: Daily Report"</code>
+                </div>
+                <div class="usage-item">
+                    <h3>📆 月次レポート</h3>
+                    <p>月別の集計データと日別内訳</p>
+                    <code>Ctrl+Shift+P → "Claude Usage: Monthly Report"</code>
+                </div>
+                <div class="usage-item">
+                    <h3>🔴 ライブセッション</h3>
+                    <p>現在アクティブな会話をリアルタイム監視</p>
+                    <code>Ctrl+Shift+P → "Claude Usage: Live Session Monitor"</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>リンク</h4>
+                    <ul>
+                        <li><a href="https://github.com/aether-platform/ccusage-ext">GitHub</a></li>
+                        <li><a href="https://marketplace.visualstudio.com/items?itemName=aether-platform.ccusage-ext">VS Code Marketplace</a></li>
+                        <li><a href="https://github.com/aether-platform/ccusage-ext/issues">バグ報告</a></li>
+                        <li><a href="https://github.com/aether-platform/ccusage-ext/discussions">ディスカッション</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>サポート</h4>
+                    <ul>
+                        <li><a href="https://github.com/sponsors/aether-platform">GitHub Sponsors</a></li>
+                        <li><a href="https://opencollective.com/aether-platform">Open Collective</a></li>
+                        <li><a href="https://ko-fi.com/aether-platform">Ko-fi</a></li>
+                        <li><a href="mailto:contact@aether-platform.org">メール</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>ライセンス</h4>
+                    <p>MIT License</p>
+                    <p>&copy; 2025 Aether Platform</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

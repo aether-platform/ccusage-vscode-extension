@@ -21,6 +21,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Create status bar item
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'ccusage.showDashboard';
+  statusBarItem.text = '$(file-code) Claude Usage (Loading...)';
+  statusBarItem.tooltip = 'Claude Code usage tracker - Loading data...';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
@@ -29,35 +31,11 @@ export function activate(context: vscode.ExtensionContext) {
     webViewProvider.createDashboardWebView(context, currentEntries);
   });
 
-  const dailyReportCommand = vscode.commands.registerCommand('ccusage.showDailyReport', async () => {
-    const date = await vscode.window.showInputBox({
-      prompt: 'Enter date (YYYY-MM-DD) or leave empty for today',
-      value: new Date().toISOString().substring(0, 10)
-    });
-    if (date !== undefined) {
-      webViewProvider.createDailyReportWebView(context, currentEntries, date || undefined);
-    }
-  });
-
-  const monthlyReportCommand = vscode.commands.registerCommand('ccusage.showMonthlyReport', async () => {
-    const month = await vscode.window.showInputBox({
-      prompt: 'Enter month (YYYY-MM) or leave empty for current month',
-      value: new Date().toISOString().substring(0, 7)
-    });
-    if (month !== undefined) {
-      webViewProvider.createMonthlyReportWebView(context, currentEntries, month || undefined);
-    }
-  });
-
-  const liveSessionCommand = vscode.commands.registerCommand('ccusage.showLiveSession', () => {
-    webViewProvider.createLiveSessionWebView(context, currentEntries);
-  });
-
   const showEnvironmentCommand = vscode.commands.registerCommand('ccusage.showEnvironment', () => {
     HostResolver.showEnvironmentStatus();
   });
 
-  context.subscriptions.push(dashboardCommand, dailyReportCommand, monthlyReportCommand, liveSessionCommand, showEnvironmentCommand);
+  context.subscriptions.push(dashboardCommand, showEnvironmentCommand);
 
   // Initialize file watcher
   initializeFileWatcher(context);
@@ -111,7 +89,15 @@ async function initializeFileWatcher(context: vscode.ExtensionContext) {
     
     fileWatcher.start((entries: ClaudeTranscriptEntry[]) => {
       currentEntries = entries;
+      console.log(`Loaded ${entries.length} entries from Claude Code data`);
+      if (entries.length > 0) {
+        console.log(`Latest entry: ${entries[entries.length - 1]?.timestamp || 'N/A'}`);
+        console.log(`Sample entry:`, entries[0]);
+      }
       updateStatusBarFromEntries(entries);
+      
+      // 既存のWebViewパネルがあれば更新
+      webViewProvider.updateExistingPanels(entries);
     });
 
     console.log(`Watching Claude projects in: ${claudePaths.join(', ')}`);
@@ -133,7 +119,7 @@ function updateStatusBar(totalTokens: number, totalCost: number) {
   
   if (showStatusBar) {
     statusBarItem.text = `$(pulse) ${totalTokens.toLocaleString()} tokens ($${totalCost.toFixed(2)})`;
-    statusBarItem.tooltip = 'Click to view Claude usage dashboard';
+    statusBarItem.tooltip = `Click to view Claude usage dashboard\nEntries loaded: ${currentEntries.length}`;
     statusBarItem.show();
   } else {
     statusBarItem.hide();
