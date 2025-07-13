@@ -1,0 +1,39 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.6
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        entry: pnpm exec eslint
+        language: system
+        files: \.(ts|js)$
+        args: [--fix]
+
+      - id: typescript-check
+        name: TypeScript Check
+        entry: pnpm exec tsc
+        language: system
+        files: \.(ts)$
+        args: [--noEmit]
+
+      - id: prettier
+        name: Prettier
+        entry: pnpm exec prettier
+        language: system
+        files: \.(ts|js|json|md)$
+        args: [--write]
