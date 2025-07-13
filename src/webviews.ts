@@ -8,6 +8,7 @@ export class WebViewProvider {
   private dailyReportPanel?: vscode.WebviewPanel;
   private monthlyReportPanel?: vscode.WebviewPanel;
   private liveSessionPanel?: vscode.WebviewPanel;
+  private sponsorPanel?: vscode.WebviewPanel;
 
   // データ更新時に既存のパネルを更新するメソッド
   private currentEntries: ClaudeTranscriptEntry[] = [];
@@ -836,12 +837,70 @@ export class WebViewProvider {
     `;
   }
 
+  private calculateMedian(values: number[]): number {
+    if (values.length === 0) return 0;
+    
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    
+    if (sorted.length % 2 === 0) {
+      return (sorted[mid - 1] + sorted[mid]) / 2;
+    } else {
+      return sorted[mid];
+    }
+  }
+
   private getDailyListHtml(): string {
     const dailyReports = this.analytics.getRecentDays(this.currentEntries, 30);
+    
+    // Calculate overall statistics for the daily reports
+    const validReports = dailyReports.filter(r => r.stats.sessions > 0);
+    const dailyTokens = validReports.map(r => r.stats.totalTokens);
+    const dailyCosts = validReports.map(r => r.stats.totalCost);
+    const dailyAvgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
+    
+    const avgDailyTokens = dailyTokens.length > 0 ? Math.round(dailyTokens.reduce((a, b) => a + b, 0) / dailyTokens.length) : 0;
+    const medianDailyTokens = Math.round(this.calculateMedian(dailyTokens));
+    const avgDailyCost = dailyCosts.length > 0 ? dailyCosts.reduce((a, b) => a + b, 0) / dailyCosts.length : 0;
+    const medianDailyCost = this.calculateMedian(dailyCosts);
+    const avgOfAvgTokensPerSession = dailyAvgTokens.length > 0 ? Math.round(dailyAvgTokens.reduce((a, b) => a + b, 0) / dailyAvgTokens.length) : 0;
+    const medianOfAvgTokensPerSession = Math.round(this.calculateMedian(dailyAvgTokens));
     
     return `
     <div class="list-container">
       <h2>📅 Daily Reports (Last 30 Days)</h2>
+      
+      <!-- Summary Statistics -->
+      <div class="period-summary">
+        <h3>📊 30日間の統計サマリー</h3>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-value">${avgDailyTokens.toLocaleString()}</div>
+            <div class="summary-label">平均日次トークン</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${medianDailyTokens.toLocaleString()}</div>
+            <div class="summary-label">中央値日次トークン</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value cost">$${avgDailyCost.toFixed(4)}</div>
+            <div class="summary-label">平均日次コスト</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value cost">$${medianDailyCost.toFixed(4)}</div>
+            <div class="summary-label">中央値日次コスト</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${avgOfAvgTokensPerSession.toLocaleString()}</div>
+            <div class="summary-label">平均セッション効率</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${medianOfAvgTokensPerSession.toLocaleString()}</div>
+            <div class="summary-label">中央値セッション効率</div>
+          </div>
+        </div>
+      </div>
+      
       <table class="report-table">
         <thead>
           <tr>
@@ -872,6 +931,45 @@ export class WebViewProvider {
       .list-container {
         margin: 20px 0;
       }
+      .period-summary {
+        background: var(--vscode-panel-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .period-summary h3 {
+        margin: 0 0 15px 0;
+        color: var(--vscode-charts-blue);
+        font-size: 16px;
+      }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+      }
+      .summary-card {
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 6px;
+        padding: 12px;
+        text-align: center;
+      }
+      .summary-value {
+        font-size: 20px;
+        font-weight: bold;
+        color: var(--vscode-charts-green);
+        margin-bottom: 4px;
+      }
+      .summary-value.cost {
+        color: var(--vscode-charts-orange);
+      }
+      .summary-label {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
       .report-table {
         width: 100%;
         border-collapse: collapse;
@@ -897,9 +995,54 @@ export class WebViewProvider {
   private getWeeklyListHtml(): string {
     const weeklyReports = this.analytics.getRecentWeeks(this.currentEntries, 12);
     
+    // Calculate overall statistics for the weekly reports
+    const validReports = weeklyReports.filter(r => r.stats.sessions > 0);
+    const weeklyTokens = validReports.map(r => r.stats.totalTokens);
+    const weeklyCosts = validReports.map(r => r.stats.totalCost);
+    const weeklyAvgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
+    
+    const avgWeeklyTokens = weeklyTokens.length > 0 ? Math.round(weeklyTokens.reduce((a, b) => a + b, 0) / weeklyTokens.length) : 0;
+    const medianWeeklyTokens = Math.round(this.calculateMedian(weeklyTokens));
+    const avgWeeklyCost = weeklyCosts.length > 0 ? weeklyCosts.reduce((a, b) => a + b, 0) / weeklyCosts.length : 0;
+    const medianWeeklyCost = this.calculateMedian(weeklyCosts);
+    const avgOfAvgTokensPerSession = weeklyAvgTokens.length > 0 ? Math.round(weeklyAvgTokens.reduce((a, b) => a + b, 0) / weeklyAvgTokens.length) : 0;
+    const medianOfAvgTokensPerSession = Math.round(this.calculateMedian(weeklyAvgTokens));
+    
     return `
     <div class="list-container">
       <h2>📅 Weekly Reports (Last 12 Weeks)</h2>
+      
+      <!-- Summary Statistics -->
+      <div class="period-summary">
+        <h3>📊 12週間の統計サマリー</h3>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-value">${avgWeeklyTokens.toLocaleString()}</div>
+            <div class="summary-label">平均週次トークン</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${medianWeeklyTokens.toLocaleString()}</div>
+            <div class="summary-label">中央値週次トークン</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value cost">$${avgWeeklyCost.toFixed(4)}</div>
+            <div class="summary-label">平均週次コスト</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value cost">$${medianWeeklyCost.toFixed(4)}</div>
+            <div class="summary-label">中央値週次コスト</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${avgOfAvgTokensPerSession.toLocaleString()}</div>
+            <div class="summary-label">平均セッション効率</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${medianOfAvgTokensPerSession.toLocaleString()}</div>
+            <div class="summary-label">中央値セッション効率</div>
+          </div>
+        </div>
+      </div>
+      
       <table class="report-table">
         <thead>
           <tr>
@@ -931,9 +1074,54 @@ export class WebViewProvider {
   private getMonthlyListHtml(): string {
     const monthlyReports = this.analytics.getRecentMonths(this.currentEntries, 12);
     
+    // Calculate overall statistics for the monthly reports
+    const validReports = monthlyReports.filter(r => r.stats.sessions > 0);
+    const monthlyTokens = validReports.map(r => r.stats.totalTokens);
+    const monthlyCosts = validReports.map(r => r.stats.totalCost);
+    const monthlyAvgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
+    
+    const avgMonthlyTokens = monthlyTokens.length > 0 ? Math.round(monthlyTokens.reduce((a, b) => a + b, 0) / monthlyTokens.length) : 0;
+    const medianMonthlyTokens = Math.round(this.calculateMedian(monthlyTokens));
+    const avgMonthlyCost = monthlyCosts.length > 0 ? monthlyCosts.reduce((a, b) => a + b, 0) / monthlyCosts.length : 0;
+    const medianMonthlyCost = this.calculateMedian(monthlyCosts);
+    const avgOfAvgTokensPerSession = monthlyAvgTokens.length > 0 ? Math.round(monthlyAvgTokens.reduce((a, b) => a + b, 0) / monthlyAvgTokens.length) : 0;
+    const medianOfAvgTokensPerSession = Math.round(this.calculateMedian(monthlyAvgTokens));
+    
     return `
     <div class="list-container">
       <h2>📆 Monthly Reports (Last 12 Months)</h2>
+      
+      <!-- Summary Statistics -->
+      <div class="period-summary">
+        <h3>📊 12ヶ月の統計サマリー</h3>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-value">${avgMonthlyTokens.toLocaleString()}</div>
+            <div class="summary-label">平均月次トークン</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${medianMonthlyTokens.toLocaleString()}</div>
+            <div class="summary-label">中央値月次トークン</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value cost">$${avgMonthlyCost.toFixed(4)}</div>
+            <div class="summary-label">平均月次コスト</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value cost">$${medianMonthlyCost.toFixed(4)}</div>
+            <div class="summary-label">中央値月次コスト</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${avgOfAvgTokensPerSession.toLocaleString()}</div>
+            <div class="summary-label">平均セッション効率</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-value">${medianOfAvgTokensPerSession.toLocaleString()}</div>
+            <div class="summary-label">中央値セッション効率</div>
+          </div>
+        </div>
+      </div>
+      
       <table class="report-table">
         <thead>
           <tr>
@@ -960,5 +1148,155 @@ export class WebViewProvider {
       </table>
     </div>
     `;
+  }
+
+  createSponsorWebView(context: vscode.ExtensionContext): vscode.WebviewPanel {
+    // 既存のスポンサーパネルがある場合は再利用
+    if (this.sponsorPanel) {
+      this.sponsorPanel.reveal(vscode.ViewColumn.One);
+      return this.sponsorPanel;
+    }
+
+    this.sponsorPanel = vscode.window.createWebviewPanel(
+      'ccusageSponsor',
+      '💖 Support Claude Usage Tracker',
+      vscode.ViewColumn.One,
+      {
+        enableScripts: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'resources')]
+      }
+    );
+
+    // パネルが閉じられたときのクリーンアップ
+    this.sponsorPanel.onDidDispose(() => {
+      this.sponsorPanel = undefined;
+    });
+
+    this.sponsorPanel.webview.html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Support This Project</title>
+        <style>
+            body { 
+                font-family: var(--vscode-font-family); 
+                padding: 20px; 
+                color: var(--vscode-foreground);
+                background-color: var(--vscode-editor-background);
+                line-height: 1.6;
+            }
+            .sponsor-card {
+                background: var(--vscode-panel-background);
+                border: 1px solid var(--vscode-panel-border);
+                border-radius: 8px;
+                padding: 20px;
+                margin: 20px 0;
+                text-align: center;
+            }
+            .sponsor-title {
+                font-size: 24px;
+                color: var(--vscode-charts-blue);
+                margin-bottom: 10px;
+            }
+            .sponsor-description {
+                color: var(--vscode-descriptionForeground);
+                margin-bottom: 20px;
+            }
+            .sponsor-links {
+                display: flex;
+                gap: 15px;
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+            .sponsor-link {
+                padding: 10px 20px;
+                background: var(--vscode-button-background);
+                color: var(--vscode-button-foreground);
+                text-decoration: none;
+                border-radius: 6px;
+                border: none;
+                cursor: pointer;
+                font-size: 14px;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .sponsor-link:hover {
+                background: var(--vscode-button-hoverBackground);
+            }
+        </style>
+    </head>
+    <body>
+        <h1>💖 Support This Project</h1>
+        
+        <div class="sponsor-card">
+            <div class="sponsor-title">💖 Claude Usage Trackerを支援</div>
+            <div class="sponsor-description">
+                このプロジェクトがお役に立ちましたら、開発継続のためのご支援をお願いします。<br>
+                100%無料のオープンソースプロジェクトとして、皆様のサポートが開発を支えています。
+            </div>
+            <div class="sponsor-links">
+                <a href="https://github.com/sponsors/aether-platform" class="sponsor-link">
+                    ❤️ GitHub Sponsorsで支援
+                </a>
+                <a href="https://opencollective.com/aether-platform" class="sponsor-link">
+                    🌍 Open Collective
+                </a>
+                <a href="https://ko-fi.com/aether-platform" class="sponsor-link">
+                    ☕ Ko-fi
+                </a>
+                <a href="https://github.com/aether-platform/ccusage-ext" class="sponsor-link">
+                    ⭐ GitHubでスター
+                </a>
+            </div>
+        </div>
+        
+        <div class="sponsor-card">
+            <div class="sponsor-title">🚀 提供している価値</div>
+            <div class="sponsor-description">
+                • リアルタイムClaude Code使用量追跡<br>
+                • 詳細な統計分析（平均値・中央値）<br>
+                • 日次・週次・月次レポート<br>
+                • 全Claudeモデルのコスト追跡<br>
+                • $300プランの投資対効果分析<br>
+                • WSL・Remote Container対応<br>
+                • 美しいダッシュボードと比較ビュー
+            </div>
+        </div>
+        
+        <div class="sponsor-card">
+            <div class="sponsor-title">💎 スポンサーティア</div>
+            <div class="sponsor-description">
+                <strong>☕ コーヒースポンサー ($5/月)</strong> - 開発継続への感謝<br>
+                <strong>🚀 アクティブサポーター ($25/月)</strong> - 優先サポート・早期アクセス<br>
+                <strong>🏢 ビジネススポンサー ($100/月)</strong> - カスタム機能・企業ロゴ掲載<br><br>
+                <em>支援は任意です。プロジェクトは引き続き無料でご利用いただけます。</em>
+            </div>
+        </div>
+        
+        <div class="sponsor-card">
+            <div class="sponsor-title">🛠️ フィードバック & 貢献</div>
+            <div class="sponsor-description">
+                バグ報告や機能要望がございましたら、お気軽にお知らせください！<br>
+                コントリビューションも大歓迎です。
+            </div>
+            <div class="sponsor-links">
+                <a href="https://github.com/aether-platform/ccusage-ext/issues" class="sponsor-link">
+                    🐛 バグ報告
+                </a>
+                <a href="https://github.com/aether-platform/ccusage-ext/pulls" class="sponsor-link">
+                    🔧 貢献する
+                </a>
+                <a href="https://aether-platform.github.io/ccusage-ext/" class="sponsor-link">
+                    🌐 プロジェクトサイト
+                </a>
+            </div>
+        </div>
+    </body>
+    </html>`;
+
+    return this.sponsorPanel;
   }
 }

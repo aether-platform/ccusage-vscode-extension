@@ -35,7 +35,11 @@ export function activate(context: vscode.ExtensionContext) {
     HostResolver.showEnvironmentStatus();
   });
 
-  context.subscriptions.push(dashboardCommand, showEnvironmentCommand);
+  const showSponsorInfoCommand = vscode.commands.registerCommand('ccusage.showSponsorInfo', () => {
+    webViewProvider.createSponsorWebView(context);
+  });
+
+  context.subscriptions.push(dashboardCommand, showEnvironmentCommand, showSponsorInfoCommand);
 
   // Initialize file watcher
   initializeFileWatcher(context);

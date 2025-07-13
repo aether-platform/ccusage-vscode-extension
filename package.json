@@ -22,6 +22,11 @@
         "command": "ccusage.showEnvironment",
         "title": "Show Environment Status",
         "category": "Claude Usage"
+      },
+      {
+        "command": "ccusage.showSponsorInfo",
+        "title": "💖 Support This Project",
+        "category": "Claude Usage"
       }
     ],
     "configuration": {

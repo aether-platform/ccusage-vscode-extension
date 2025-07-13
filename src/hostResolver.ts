@@ -65,6 +65,157 @@ export class HostResolver {
     );
   }
 
+  private static prioritizeWSLUsers(userDirs: string[]): string[] {
+    // Create a prioritized list of users based on various heuristics
+    const prioritized: Array<{ name: string, score: number }> = [];
+    
+    for (const userDir of userDirs) {
+      let score = 0;
+      
+      try {
+        const userPath = `/mnt/c/Users/${userDir}`;
+        
+        // Higher priority for users with Claude data
+        const claudePaths = [
+          path.join(userPath, 'AppData', 'Roaming', 'claude'),
+          path.join(userPath, '.claude'),
+          path.join(userPath, '.config', 'claude')
+        ];
+        
+        for (const claudePath of claudePaths) {
+          if (fs.existsSync(claudePath)) {
+            score += 100;
+            // Extra points if it contains projects or actual usage data
+            if (fs.existsSync(path.join(claudePath, 'projects'))) {
+              score += 50;
+            }
+          }
+        }
+        
+        // Higher priority for users with VS Code data
+        if (fs.existsSync(path.join(userPath, 'AppData', 'Roaming', 'Code'))) {
+          score += 20;
+        }
+        
+        // Higher priority for users with recent activity
+        const stat = fs.statSync(userPath);
+        const daysSinceModified = (Date.now() - stat.mtime.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSinceModified < 7) {
+          score += 30;
+        } else if (daysSinceModified < 30) {
+          score += 10;
+        }
+        
+        // Lower priority for system/service accounts
+        if (userDir.toLowerCase().includes('system') || 
+            userDir.toLowerCase().includes('service') ||
+            userDir.toLowerCase().includes('admin') ||
+            userDir.startsWith('_')) {
+          score -= 50;
+        }
+        
+        // Higher priority for common personal account names
+        if (userDir.toLowerCase().match(/^[a-z]+$/)) {
+          score += 5;
+        }
+        
+      } catch (error) {
+        // If we can't access the directory, give it very low priority
+        score = -100;
+      }
+      
+      prioritized.push({ name: userDir, score });
+    }
+    
+    // Sort by score (highest first) and return names
+    return prioritized
+      .sort((a, b) => b.score - a.score)
+      .map(item => item.name);
+  }
+
+  private static detectWindowsUsername(): string[] {
+    const detectedUsers: string[] = [];
+    
+    try {
+      // Method 1: Check Windows registry via wslpath
+      const child_process = require('child_process');
+      
+      // Try to get Windows username from whoami.exe if available
+      try {
+        const result = child_process.execSync('cmd.exe /c whoami 2>/dev/null', { 
+          encoding: 'utf8', 
+          timeout: 5000 
+        });
+        const username = result.trim().split('\\').pop();
+        if (username && !detectedUsers.includes(username)) {
+          detectedUsers.push(username);
+        }
+      } catch (error) {
+        // Ignore error, try next method
+      }
+      
+      // Method 2: Parse from Windows environment variables accessible via cmd
+      try {
+        const result = child_process.execSync('cmd.exe /c echo %USERNAME% 2>/dev/null', { 
+          encoding: 'utf8', 
+          timeout: 5000 
+        });
+        const username = result.trim();
+        if (username && username !== '%USERNAME%' && !detectedUsers.includes(username)) {
+          detectedUsers.push(username);
+        }
+      } catch (error) {
+        // Ignore error, try next method
+      }
+      
+      // Method 3: Check for typical Windows user profile patterns
+      try {
+        const windowsUserDir = '/mnt/c/Users';
+        if (fs.existsSync(windowsUserDir)) {
+          const userDirs = fs.readdirSync(windowsUserDir, { withFileTypes: true })
+            .filter(dirent => dirent.isDirectory() && !dirent.name.startsWith('.'))
+            .filter(dirent => !['Default', 'Public', 'All Users'].includes(dirent.name))
+            .map(dirent => dirent.name);
+          
+          // Find users with the most recent VS Code or Claude activity
+          const recentUsers = userDirs
+            .map(userDir => {
+              try {
+                const userPath = `/mnt/c/Users/${userDir}`;
+                const claudePath = path.join(userPath, 'AppData', 'Roaming', 'claude');
+                const vscodePath = path.join(userPath, 'AppData', 'Roaming', 'Code');
+                
+                let lastActivity = 0;
+                if (fs.existsSync(claudePath)) {
+                  lastActivity = Math.max(lastActivity, fs.statSync(claudePath).mtime.getTime());
+                }
+                if (fs.existsSync(vscodePath)) {
+                  lastActivity = Math.max(lastActivity, fs.statSync(vscodePath).mtime.getTime());
+                }
+                
+                return { name: userDir, lastActivity };
+              } catch {
+                return { name: userDir, lastActivity: 0 };
+              }
+            })
+            .filter(user => user.lastActivity > 0)
+            .sort((a, b) => b.lastActivity - a.lastActivity)
+            .slice(0, 2) // Top 2 most recent users
+            .map(user => user.name);
+          
+          detectedUsers.push(...recentUsers.filter(user => !detectedUsers.includes(user)));
+        }
+      } catch (error) {
+        // Ignore error
+      }
+      
+    } catch (error) {
+      console.warn('Could not detect Windows username:', error);
+    }
+    
+    return detectedUsers;
+  }
+
   private static createLocalEnvironment(): HostEnvironment {
     const homedir = os.homedir();
     
@@ -84,7 +235,7 @@ export class HostResolver {
     
     const claudePaths: string[] = [];
     
-    // Try to find Windows user directories
+    // Try to find Windows user directories with enhanced detection
     try {
       const windowsUserDir = '/mnt/c/Users';
       if (fs.existsSync(windowsUserDir)) {
@@ -93,8 +244,11 @@ export class HostResolver {
           .filter(dirent => !['Default', 'Public', 'All Users'].includes(dirent.name))
           .map(dirent => dirent.name);
         
+        // Enhanced user directory prioritization
+        const prioritizedUsers = this.prioritizeWSLUsers(userDirs);
+        
         // Check each user directory for Claude data
-        for (const userDir of userDirs) {
+        for (const userDir of prioritizedUsers) {
           const userPath = path.join(windowsUserDir, userDir);
           const candidatePaths = [
             path.join(userPath, '.claude', 'projects'),
@@ -114,11 +268,14 @@ export class HostResolver {
       console.warn('Could not access Windows user directories:', error);
     }
     
-    // Also check specific environment-based paths
+    // Also check specific environment-based paths with enhanced detection
     const manualUsername = config.get<string>('wslWindowsUsername');
+    const detectedUsernames = this.detectWindowsUsername();
+    
     const envBasedPaths = [
       process.env.USERPROFILE,
       manualUsername ? `/mnt/c/Users/${manualUsername}` : null,
+      ...detectedUsernames.map(username => `/mnt/c/Users/${username}`),
       process.env.USERNAME ? `/mnt/c/Users/${process.env.USERNAME}` : null,
       process.env.USER ? `/mnt/c/Users/${process.env.USER}` : null,
     ].filter(Boolean) as string[];
