@@ -1,0 +1,3 @@
+[submodule "refs/ccusage"]
+	path = refs/ccusage
+	url = git@github.com:ryoppippi/ccusage.git
