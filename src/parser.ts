@@ -32,11 +32,13 @@ export class JSONLParser {
             continue;
           }
           
-          // Check if there are any tokens at all
-          const hasTokens = (usage.input_tokens > 0) || 
-                          (usage.output_tokens > 0) || 
-                          (usage.cache_creation_input_tokens > 0) || 
-                          (usage.cache_read_input_tokens > 0);
+          // Check if there are any tokens at all - note the underscores in field names
+          const inputTokens = usage.input_tokens || 0;
+          const outputTokens = usage.output_tokens || 0;
+          const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+          const cacheReadTokens = usage.cache_read_input_tokens || 0;
+          
+          const hasTokens = inputTokens > 0 || outputTokens > 0 || cacheCreationTokens > 0 || cacheReadTokens > 0;
           
           if (!hasTokens) {
             continue;
@@ -65,6 +67,14 @@ export class JSONLParser {
             this.processedEntries.add('debug_logged');
           }
           
+          // Create usage object in the format expected by analytics
+          const formattedUsage = {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            cache_creation_input_tokens: cacheCreationTokens,
+            cache_read_input_tokens: cacheReadTokens
+          };
+          
           const entry: ClaudeTranscriptEntry = {
             timestamp: rawEntry.timestamp,
             conversation_id: rawEntry.sessionId || rawEntry.uuid,
@@ -72,7 +82,7 @@ export class JSONLParser {
             role: rawEntry.message.role || 'assistant',
             model: rawEntry.message.model || 'unknown',
             content: this.extractContent(rawEntry.message.content),
-            usage: usage,
+            usage: formattedUsage,
             project_name: this.extractProjectName(rawEntry.cwd || filePath),
             project_id: rawEntry.sessionId || 'unknown'
           };
