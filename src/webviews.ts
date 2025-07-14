@@ -246,6 +246,7 @@ export class WebViewProvider {
   }
 
   private getDashboardHtml(stats: UsageStats, sessions: SessionData[], activeView = 'dashboard'): string {
+    const isWindows = process.platform === 'win32';
     return `
     <!DOCTYPE html>
     <html>
@@ -410,10 +411,10 @@ export class WebViewProvider {
                 <li>Claude Codeがインストールされていること</li>
                 <li>Claude Codeを使用したことがあること</li>
                 <li>.claudeディレクトリが正しい場所にあること</li>
-                ${process.platform === 'win32' ? '<li><strong>Windowsユーザーの方へ</strong>: WSL環境でVS Codeを使用することで、Claude Codeとの統合が改善される可能性があります</li>' : ''}
+                ${isWindows ? '<li><strong>Windowsユーザーの方へ</strong>: WSL環境でVS Codeを使用することで、Claude Codeとの統合が改善される可能性があります</li>' : ''}
             </ul>
             <p style="margin-bottom: 10px;">環境設定を確認するには、コマンドパレットから「Show Claude Environment Status」を実行してください。</p>
-            ${process.platform === 'win32' ? `
+            ${isWindows ? `
             <p style="margin: 0;">
                 <button onclick="vscode.postMessage({command: 'connectToWSL'})" style="padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer;">
                     WSLに接続

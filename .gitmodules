@@ -1,3 +1,5 @@
 [submodule "refs/ccusage"]
 	path = refs/ccusage
 	url = git@github.com:ryoppippi/ccusage.git
+[submodule "refs/ccusage-vscode-extension"]
+	path = refs/ccusage-vscode-extension

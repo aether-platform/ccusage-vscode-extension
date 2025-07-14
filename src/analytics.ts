@@ -58,6 +58,15 @@ export class AnalyticsEngine {
 
     console.log(`[Analytics] Processing ${entries.length} entries`);
     
+    // Debug: Check how many entries have usage data
+    const entriesWithUsage = entries.filter(e => e.usage);
+    console.log(`[Analytics] Entries with usage data: ${entriesWithUsage.length}/${entries.length}`);
+    
+    // Debug: Show sample entry with usage
+    if (entriesWithUsage.length > 0) {
+      console.log(`[Analytics] Sample entry with usage:`, entriesWithUsage[0]);
+    }
+    
     const dates = entries.map(e => e.timestamp).sort();
     const dateRange = {
       start: dates[0] || '',
@@ -66,7 +75,6 @@ export class AnalyticsEngine {
 
     for (const entry of entries) {
       if (!entry.usage) {
-        console.log(`[Analytics] Entry ${entry.timestamp} has no usage data`);
         continue;
       }
 
@@ -83,8 +91,32 @@ export class AnalyticsEngine {
 
       sessions.add(entry.conversation_id);
 
-      // Calculate cost
-      const pricing = this.modelPricing[entry.model];
+      // Calculate cost - handle model name variations (similar to ccusage)
+      let modelKey = entry.model;
+      
+      // Normalize model names to match our pricing keys
+      // Handle both old and new naming conventions
+      if (modelKey.includes('claude')) {
+        // Already has claude prefix, just normalize
+        if (modelKey.includes('sonnet') && modelKey.includes('3.5')) {
+          modelKey = 'claude-3-5-sonnet-20241022';
+        } else if (modelKey.includes('sonnet-4') || (modelKey.includes('sonnet') && modelKey.includes('4'))) {
+          modelKey = 'claude-sonnet-4-20250514';
+        } else if (modelKey.includes('opus-4') || (modelKey.includes('opus') && modelKey.includes('4'))) {
+          modelKey = 'claude-opus-4-20250514';
+        } else if (modelKey.includes('opus') && modelKey.includes('3')) {
+          modelKey = 'claude-3-opus-20240229';
+        } else if (modelKey.includes('haiku-4') || (modelKey.includes('haiku') && modelKey.includes('4'))) {
+          modelKey = 'claude-haiku-4-20250514';
+        } else if (modelKey.includes('haiku') && modelKey.includes('3')) {
+          modelKey = 'claude-3-haiku-20240307';
+        }
+      } else {
+        // Add claude prefix if missing
+        modelKey = `claude-${modelKey}`;
+      }
+      
+      const pricing = this.modelPricing[modelKey];
       let entryCost = 0;
       if (pricing) {
         entryCost = (inputTokens * pricing.inputTokenPrice) / 1_000_000;
@@ -93,7 +125,7 @@ export class AnalyticsEngine {
         entryCost += (cacheReadTokens * pricing.cacheReadPrice) / 1_000_000;
         totalCost += entryCost;
       } else {
-        console.log(`[Analytics] No pricing found for model: ${entry.model}`);
+        console.log(`[Analytics] No pricing found for model: ${entry.model} (tried: ${modelKey})`);
       }
 
       // Log sample entry for debugging

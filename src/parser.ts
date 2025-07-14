@@ -5,6 +5,7 @@ import { HostResolver } from './hostResolver';
 
 export class JSONLParser {
   private processedEntries = new Set<string>();
+  private processedHashes = new Set<string>(); // For deduplication by message+request ID
 
   parseFile(filePath: string): ClaudeTranscriptEntry[] {
     try {
@@ -18,27 +19,70 @@ export class JSONLParser {
         try {
           const rawEntry = JSON.parse(line);
           
-          // Convert Claude Code JSONL format to our format
-          if (rawEntry.message && rawEntry.sessionId && rawEntry.uuid && rawEntry.timestamp) {
-            const entry: ClaudeTranscriptEntry = {
-              timestamp: rawEntry.timestamp,
-              conversation_id: rawEntry.sessionId,
-              turn_id: rawEntry.uuid,
-              role: rawEntry.message.role || 'user',
-              model: rawEntry.message.model || 'unknown',
-              content: typeof rawEntry.message.content === 'string' ? rawEntry.message.content : JSON.stringify(rawEntry.message.content),
-              usage: rawEntry.message.usage,
-              project_name: this.extractProjectName(rawEntry.cwd),
-              project_id: rawEntry.sessionId
-            };
-            
-            const entryId = this.generateEntryId(entry);
-            
-            // Global deduplication
-            if (!this.processedEntries.has(entryId)) {
-              this.processedEntries.add(entryId);
-              entries.push(entry);
+          // Validate JSONL structure
+          if (!rawEntry.message || !rawEntry.timestamp) {
+            continue;
+          }
+          
+          // Extract usage data - it should be in message.usage
+          const usage = rawEntry.message?.usage;
+          
+          // Skip entries without usage data
+          if (!usage) {
+            continue;
+          }
+          
+          // Check if there are any tokens at all
+          const hasTokens = (usage.input_tokens > 0) || 
+                          (usage.output_tokens > 0) || 
+                          (usage.cache_creation_input_tokens > 0) || 
+                          (usage.cache_read_input_tokens > 0);
+          
+          if (!hasTokens) {
+            continue;
+          }
+          
+          // Create unique hash for deduplication (like ccusage)
+          const messageId = rawEntry.message?.id;
+          const requestId = rawEntry.requestId;
+          if (messageId && requestId) {
+            const uniqueHash = `${messageId}:${requestId}`;
+            if (this.processedHashes.has(uniqueHash)) {
+              continue; // Skip duplicate
             }
+            this.processedHashes.add(uniqueHash);
+          }
+          
+          // Debug: Log first entry with usage
+          if (!this.processedEntries.has('debug_logged') && usage) {
+            console.log('[Parser] Sample entry with usage:', {
+              timestamp: rawEntry.timestamp,
+              model: rawEntry.message?.model,
+              usage: usage,
+              messageId: messageId,
+              requestId: requestId
+            });
+            this.processedEntries.add('debug_logged');
+          }
+          
+          const entry: ClaudeTranscriptEntry = {
+            timestamp: rawEntry.timestamp,
+            conversation_id: rawEntry.sessionId || rawEntry.uuid,
+            turn_id: rawEntry.uuid || messageId || '',
+            role: rawEntry.message.role || 'assistant',
+            model: rawEntry.message.model || 'unknown',
+            content: this.extractContent(rawEntry.message.content),
+            usage: usage,
+            project_name: this.extractProjectName(rawEntry.cwd || filePath),
+            project_id: rawEntry.sessionId || 'unknown'
+          };
+          
+          const entryId = this.generateEntryId(entry);
+          
+          // Global deduplication
+          if (!this.processedEntries.has(entryId)) {
+            this.processedEntries.add(entryId);
+            entries.push(entry);
           }
         } catch (parseError) {
           console.warn(`Failed to parse line in ${filePath}:`, line);
@@ -96,6 +140,23 @@ export class JSONLParser {
 
   clearCache(): void {
     this.processedEntries.clear();
+    this.processedHashes.clear();
+  }
+  
+  private extractContent(content: any): string {
+    if (typeof content === 'string') {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      // Handle content array format like ccusage
+      return content.map(item => {
+        if (typeof item === 'string') return item;
+        if (item?.text) return item.text;
+        if (item?.type === 'text' && item?.text) return item.text;
+        return JSON.stringify(item);
+      }).join('\n');
+    }
+    return JSON.stringify(content);
   }
 
   static async getDefaultClaudePaths(): Promise<string[]> {
