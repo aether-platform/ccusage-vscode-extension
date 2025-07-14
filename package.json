@@ -2,14 +2,23 @@
   "name": "ccusage-vscode",
   "displayName": "Claude Code Usage Tracker",
   "description": "Track Claude Code token usage and costs directly in VSCode",
-  "version": "0.0.1",
+  "version": "0.0.2",
+  "publisher": "aether-platform",
+  "icon": "resources/icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aether-platform/ccusage-ext"
+  },
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished",
+    "*"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -26,6 +35,16 @@
       {
         "command": "ccusage.showSponsorInfo",
         "title": "💖 Support This Project",
+        "category": "Claude Usage"
+      },
+      {
+        "command": "ccusage.detectClaudePath",
+        "title": "🔍 Auto-detect Claude Path",
+        "category": "Claude Usage"
+      },
+      {
+        "command": "ccusage.resetSettings",
+        "title": "🔄 Reset All Settings to Default",
         "category": "Claude Usage"
       }
     ],
@@ -78,6 +97,31 @@
           "type": "boolean",
           "default": true,
           "description": "Show usage stats in status bar"
+        },
+        "ccusage.wslClaudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Manual WSL Claude path (e.g., \\\\wsl$\\Ubuntu\\root\\.claude\\projects)"
+        },
+        "ccusage.quickMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable quick mode - only check common Claude paths"
+        },
+        "ccusage.enableWSLDetection": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable WSL path detection from Windows (slower)"
+        },
+        "ccusage.stopOnFirstValidPath": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop searching after finding the first valid Claude path"
+        },
+        "ccusage.verboseLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose logging for debugging path detection"
         }
       }
     }
@@ -91,7 +135,9 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "vsce-package": "vsce package",
+    "vsce-publish": "vsce publish"
   },
   "devDependencies": {
     "@types/node": "^16.18.126",

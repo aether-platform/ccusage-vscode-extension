@@ -71,3 +71,24 @@ export interface ModelPricing {
     cacheReadPrice: number;     // per million tokens
   };
 }
+
+export interface BillingBlock {
+  blockId: string;
+  startTime: string;
+  endTime: string;
+  isActive: boolean;
+  totalTokens: number;
+  totalCost: number;
+  sessions: SessionData[];
+  remainingTime: number; // minutes remaining in block
+  tokenRate: number; // tokens per minute
+  projectedCost: number; // projected cost if rate continues
+}
+
+export interface ModelUsageStats {
+  model: string;
+  totalTokens: number;
+  totalCost: number;
+  percentage: number;
+  sessions: number;
+}

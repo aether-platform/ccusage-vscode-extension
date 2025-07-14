@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { FileWatcher } from './fileWatcher';
 import { WebViewProvider } from './webviews';
 import { AnalyticsEngine } from './analytics';
@@ -39,7 +41,21 @@ export function activate(context: vscode.ExtensionContext) {
     webViewProvider.createSponsorWebView(context);
   });
 
-  context.subscriptions.push(dashboardCommand, showEnvironmentCommand, showSponsorInfoCommand);
+  const detectClaudePathCommand = vscode.commands.registerCommand('ccusage.detectClaudePath', async () => {
+    await detectAndSetClaudePath(context);
+  });
+
+  const resetSettingsCommand = vscode.commands.registerCommand('ccusage.resetSettings', async () => {
+    await resetAllSettings();
+  });
+
+  context.subscriptions.push(
+    dashboardCommand, 
+    showEnvironmentCommand, 
+    showSponsorInfoCommand,
+    detectClaudePathCommand,
+    resetSettingsCommand
+  );
 
   // Initialize file watcher
   initializeFileWatcher(context);
@@ -57,11 +73,16 @@ async function initializeFileWatcher(context: vscode.ExtensionContext) {
     } else {
       // Use host resolver to get environment-appropriate paths
       const environment = await HostResolver.resolveExecutionHost();
+      console.log(`Detected environment: ${environment.type}`);
+      console.log(`Checking paths:`, environment.claudePaths);
+      
       claudePaths = await HostResolver.validateClaudePaths(environment);
+      console.log(`Valid Claude paths found:`, claudePaths);
       
       if (claudePaths.length === 0) {
         // Show environment-specific error message
         const envType = environment.type;
+        const isWindows = process.platform === 'win32';
         let errorMessage = `No Claude projects directory found for ${envType} environment.`;
         let settingsKey = 'ccusage.claudeProjectsPath';
         
@@ -71,17 +92,21 @@ async function initializeFileWatcher(context: vscode.ExtensionContext) {
         } else if (envType === 'container') {
           errorMessage += ' Check container workspace folder setting and mounted volumes.';
           settingsKey = 'ccusage.containerWorkspaceFolder';
+        } else if (isWindows && envType === 'local') {
+          errorMessage += ' Windows users: Consider using VS Code with WSL for better Claude Code integration.';
         }
         
-        vscode.window.showWarningMessage(
-          errorMessage,
-          'Open Settings',
-          'Show Environment'
-        ).then(selection => {
+        const options = isWindows && envType === 'local' 
+          ? ['Connect to WSL', 'Open Settings', 'Show Environment']
+          : ['Open Settings', 'Show Environment'];
+        
+        vscode.window.showWarningMessage(errorMessage, ...options).then(selection => {
           if (selection === 'Open Settings') {
             vscode.commands.executeCommand('workbench.action.openSettings', settingsKey);
           } else if (selection === 'Show Environment') {
             HostResolver.showEnvironmentStatus();
+          } else if (selection === 'Connect to WSL') {
+            vscode.commands.executeCommand('remote-wsl.newWindow');
           }
         });
         updateStatusBar(0, 0);
@@ -97,6 +122,13 @@ async function initializeFileWatcher(context: vscode.ExtensionContext) {
       if (entries.length > 0) {
         console.log(`Latest entry: ${entries[entries.length - 1]?.timestamp || 'N/A'}`);
         console.log(`Sample entry:`, entries[0]);
+        
+        // Debug: Check if entries have cost data
+        const entriesWithCost = entries.filter(e => e.usage && (e.usage.input_tokens > 0 || e.usage.output_tokens > 0));
+        console.log(`Entries with usage data: ${entriesWithCost.length}/${entries.length}`);
+        if (entriesWithCost.length > 0) {
+          console.log(`Sample usage data:`, entriesWithCost[0].usage);
+        }
       }
       updateStatusBarFromEntries(entries);
       
@@ -108,7 +140,23 @@ async function initializeFileWatcher(context: vscode.ExtensionContext) {
     
   } catch (error) {
     console.error('Failed to initialize file watcher:', error);
-    vscode.window.showErrorMessage(`Failed to initialize Claude usage tracking: ${error}`);
+    // Show warning instead of error for missing .claude directory
+    const isWindows = process.platform === 'win32';
+    const message = isWindows 
+      ? 'Claude usage tracking could not be initialized. Windows users: Consider using VS Code with WSL for better Claude Code integration.'
+      : 'Claude usage tracking could not be initialized. Please ensure Claude Code is installed and has been used.';
+    
+    const options = isWindows 
+      ? ['Connect to WSL', 'Check Environment']
+      : ['Check Environment'];
+    
+    vscode.window.showWarningMessage(message, ...options).then(selection => {
+      if (selection === 'Check Environment') {
+        vscode.commands.executeCommand('ccusage.showEnvironment');
+      } else if (selection === 'Connect to WSL') {
+        vscode.commands.executeCommand('remote-wsl.newWindow');
+      }
+    });
   }
 }
 
@@ -127,6 +175,118 @@ function updateStatusBar(totalTokens: number, totalCost: number) {
     statusBarItem.show();
   } else {
     statusBarItem.hide();
+  }
+}
+
+async function detectAndSetClaudePath(context: vscode.ExtensionContext) {
+  vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: 'Detecting Claude paths...',
+    cancellable: false
+  }, async (progress) => {
+    try {
+      // Get environment and paths
+      const environment = await HostResolver.resolveExecutionHost();
+      const validPaths = await HostResolver.validateClaudePaths(environment);
+      
+      progress.report({ increment: 50 });
+      
+      if (validPaths.length === 0) {
+        vscode.window.showWarningMessage(
+          'No Claude project directories found. Please ensure Claude Code is installed and has been used.',
+          'Check Environment'
+        ).then(selection => {
+          if (selection === 'Check Environment') {
+            vscode.commands.executeCommand('ccusage.showEnvironment');
+          }
+        });
+        return;
+      }
+      
+      // If multiple paths found, let user choose
+      let selectedPath = validPaths[0];
+      if (validPaths.length > 1) {
+        const items = validPaths.map(p => ({
+          label: p,
+          description: `${countProjectsInPath(p)} projects found`,
+          path: p
+        }));
+        
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select Claude projects path',
+          title: 'Multiple Claude paths detected'
+        });
+        
+        if (!selected) {
+          return;
+        }
+        selectedPath = selected.path;
+      }
+      
+      progress.report({ increment: 30 });
+      
+      // Update configuration
+      const config = vscode.workspace.getConfiguration('ccusage');
+      await config.update('claudeProjectsPath', selectedPath, vscode.ConfigurationTarget.Global);
+      
+      progress.report({ increment: 20 });
+      
+      vscode.window.showInformationMessage(
+        `Claude path set to: ${selectedPath}`,
+        'Reload Extension'
+      ).then(selection => {
+        if (selection === 'Reload Extension') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      });
+      
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to detect Claude path: ${error}`);
+    }
+  });
+}
+
+async function resetAllSettings() {
+  const answer = await vscode.window.showWarningMessage(
+    'This will reset all Claude Usage Tracker settings to default. Continue?',
+    'Yes', 'No'
+  );
+  
+  if (answer !== 'Yes') {
+    return;
+  }
+  
+  const config = vscode.workspace.getConfiguration('ccusage');
+  
+  // Reset all settings
+  await config.update('claudeProjectsPath', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('executionHost', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('wslDistribution', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('wslWindowsUsername', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('wslClaudePath', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('containerWorkspaceFolder', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('refreshInterval', undefined, vscode.ConfigurationTarget.Global);
+  await config.update('showStatusBar', undefined, vscode.ConfigurationTarget.Global);
+  
+  vscode.window.showInformationMessage(
+    'Settings reset to default. The extension will now auto-detect paths.',
+    'Reload Extension'
+  ).then(selection => {
+    if (selection === 'Reload Extension') {
+      vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+  });
+}
+
+function countProjectsInPath(claudePath: string): number {
+  try {
+    const entries = fileWatcher ? 
+      fileWatcher.getCurrentData().filter(e => e.project_name) : 
+      [];
+    const projects = new Set(entries.map(e => e.project_name));
+    return projects.size || fs.readdirSync(claudePath).filter(f => fs.statSync(path.join(claudePath, f)).isDirectory()).length;
+  } catch {
+    return 0;
   }
 }
 

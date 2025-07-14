@@ -1,4 +1,4 @@
-import { ClaudeTranscriptEntry, UsageStats, SessionData, DailyReport, WeeklyReport, MonthlyReport, ModelPricing } from './types';
+import { ClaudeTranscriptEntry, UsageStats, SessionData, DailyReport, WeeklyReport, MonthlyReport, ModelPricing, BillingBlock, ModelUsageStats } from './types';
 
 export class AnalyticsEngine {
   private modelPricing: ModelPricing = {
@@ -56,6 +56,8 @@ export class AnalyticsEngine {
     const sessions = new Set<string>();
     const sessionStats = new Map<string, { tokens: number; cost: number }>();
 
+    console.log(`[Analytics] Processing ${entries.length} entries`);
+    
     const dates = entries.map(e => e.timestamp).sort();
     const dateRange = {
       start: dates[0] || '',
@@ -63,7 +65,10 @@ export class AnalyticsEngine {
     };
 
     for (const entry of entries) {
-      if (!entry.usage) continue;
+      if (!entry.usage) {
+        console.log(`[Analytics] Entry ${entry.timestamp} has no usage data`);
+        continue;
+      }
 
       const usage = entry.usage;
       const inputTokens = usage.input_tokens || 0;
@@ -87,6 +92,13 @@ export class AnalyticsEngine {
         entryCost += (cacheCreationTokens * pricing.cacheCreationPrice) / 1_000_000;
         entryCost += (cacheReadTokens * pricing.cacheReadPrice) / 1_000_000;
         totalCost += entryCost;
+      } else {
+        console.log(`[Analytics] No pricing found for model: ${entry.model}`);
+      }
+
+      // Log sample entry for debugging
+      if (totalCost > 0 && Object.keys(sessionStats).length === 0) {
+        console.log(`[Analytics] Sample entry: model=${entry.model}, tokens=${inputTokens + outputTokens}, cost=${entryCost}, pricing:`, pricing);
       }
 
       // Track per-session stats
@@ -111,6 +123,8 @@ export class AnalyticsEngine {
 
     const medianTokensPerSession = this.calculateMedian(sessionTokens);
     const medianCostPerSession = this.calculateMedian(sessionCosts);
+
+    console.log(`[Analytics] Final stats: totalCost=${totalCost}, totalTokens=${totalInputTokens + totalOutputTokens + totalCacheCreationTokens + totalCacheReadTokens}, sessions=${sessions.size}`);
 
     return {
       totalTokens: totalInputTokens + totalOutputTokens + totalCacheCreationTokens + totalCacheReadTokens,
@@ -383,5 +397,165 @@ export class AnalyticsEngine {
     }
 
     return insights.join(' ');
+  }
+
+  // 5時間課金ブロックを計算
+  getBillingBlocks(entries: ClaudeTranscriptEntry[], limit?: number): BillingBlock[] {
+    if (!entries.length) return [];
+
+    // セッションデータを取得
+    const sessions = this.extractSessions(entries);
+    if (!sessions.length) return [];
+
+    // セッションを時間順にソート
+    const sortedSessions = [...sessions].sort((a, b) => 
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
+
+    const blocks: BillingBlock[] = [];
+    const blockDuration = 5 * 60 * 60 * 1000; // 5時間（ミリ秒）
+
+    let currentBlock: BillingBlock | null = null;
+
+    for (const session of sortedSessions) {
+      const sessionStart = new Date(session.startTime).getTime();
+
+      // 新しいブロックを開始するか判定
+      if (!currentBlock || sessionStart >= new Date(currentBlock.endTime).getTime()) {
+        // 現在のブロックを保存
+        if (currentBlock) {
+          blocks.push(currentBlock);
+        }
+
+        // 新しいブロックを作成
+        const blockStart = new Date(sessionStart);
+        const blockEnd = new Date(sessionStart + blockDuration);
+        
+        currentBlock = {
+          blockId: `block_${blockStart.toISOString()}`,
+          startTime: blockStart.toISOString(),
+          endTime: blockEnd.toISOString(),
+          isActive: false,
+          totalTokens: 0,
+          totalCost: 0,
+          sessions: [],
+          remainingTime: 0,
+          tokenRate: 0,
+          projectedCost: 0
+        };
+      }
+
+      // セッションを現在のブロックに追加
+      if (currentBlock) {
+        currentBlock.sessions.push(session);
+        currentBlock.totalTokens += session.totalTokens;
+        currentBlock.totalCost += session.totalCost;
+      }
+    }
+
+    // 最後のブロックを追加
+    if (currentBlock) {
+      blocks.push(currentBlock);
+    }
+
+    // ブロックの追加情報を計算
+    const now = new Date().getTime();
+    for (const block of blocks) {
+      const blockEnd = new Date(block.endTime).getTime();
+      const blockStart = new Date(block.startTime).getTime();
+      
+      // アクティブブロックかチェック
+      block.isActive = now >= blockStart && now < blockEnd;
+      
+      if (block.isActive) {
+        // 残り時間を計算（分）
+        block.remainingTime = Math.floor((blockEnd - now) / (1000 * 60));
+        
+        // トークンレートを計算（トークン/分）
+        const elapsedMinutes = Math.floor((now - blockStart) / (1000 * 60));
+        if (elapsedMinutes > 0) {
+          block.tokenRate = Math.floor(block.totalTokens / elapsedMinutes);
+          
+          // 残り時間での予想トークン数とコストを計算
+          const projectedTokens = block.totalTokens + (block.tokenRate * block.remainingTime);
+          const avgCostPerToken = block.totalCost / block.totalTokens;
+          block.projectedCost = projectedTokens * avgCostPerToken;
+        }
+      }
+    }
+
+    // 新しい順にソート
+    blocks.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+
+    return limit ? blocks.slice(0, limit) : blocks;
+  }
+
+  // モデル別の使用統計を計算
+  getModelUsageStats(entries: ClaudeTranscriptEntry[]): ModelUsageStats[] {
+    const modelStats: { [model: string]: ModelUsageStats } = {};
+    let totalTokens = 0;
+    let totalCost = 0;
+
+    // エントリーごとにモデル別に集計
+    for (const entry of entries) {
+      const model = entry.model;
+      if (!modelStats[model]) {
+        modelStats[model] = {
+          model,
+          totalTokens: 0,
+          totalCost: 0,
+          percentage: 0,
+          sessions: 0
+        };
+      }
+
+      const usage = entry.usage || {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0
+      };
+
+      const tokens = usage.input_tokens + usage.output_tokens + 
+                     (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+      const cost = this.calculateEntryCost(entry);
+
+      modelStats[model].totalTokens += tokens;
+      modelStats[model].totalCost += cost;
+      totalTokens += tokens;
+      totalCost += cost;
+    }
+
+    // セッション数をカウント
+    const sessions = this.extractSessions(entries);
+    for (const session of sessions) {
+      if (modelStats[session.model]) {
+        modelStats[session.model].sessions++;
+      }
+    }
+
+    // パーセンテージを計算
+    const statsArray = Object.values(modelStats);
+    for (const stat of statsArray) {
+      stat.percentage = totalTokens > 0 ? (stat.totalTokens / totalTokens) * 100 : 0;
+    }
+
+    // トークン数の多い順にソート
+    return statsArray.sort((a, b) => b.totalTokens - a.totalTokens);
+  }
+
+  // エントリー単体のコストを計算
+  private calculateEntryCost(entry: ClaudeTranscriptEntry): number {
+    const pricing = this.modelPricing[entry.model];
+    if (!pricing || !entry.usage) return 0;
+
+    const usage = entry.usage;
+    let cost = 0;
+    cost += (usage.input_tokens || 0) * pricing.inputTokenPrice / 1_000_000;
+    cost += (usage.output_tokens || 0) * pricing.outputTokenPrice / 1_000_000;
+    cost += (usage.cache_creation_input_tokens || 0) * pricing.cacheCreationPrice / 1_000_000;
+    cost += (usage.cache_read_input_tokens || 0) * pricing.cacheReadPrice / 1_000_000;
+    
+    return cost;
   }
 }

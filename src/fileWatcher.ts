@@ -100,12 +100,12 @@ export class FileWatcher {
     return this.allEntries;
   }
 
-  static getDefaultPaths(): string[] {
-    return JSONLParser.getDefaultClaudePaths();
+  static async getDefaultPaths(): Promise<string[]> {
+    return await JSONLParser.getDefaultClaudePaths();
   }
 
   static async findClaudeProjects(): Promise<string[]> {
-    const defaultPaths = FileWatcher.getDefaultPaths();
+    const defaultPaths = await FileWatcher.getDefaultPaths();
     const validPaths: string[] = [];
 
     for (const dirPath of defaultPaths) {

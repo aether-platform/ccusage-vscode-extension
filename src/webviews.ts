@@ -53,6 +53,12 @@ export class WebViewProvider {
         const activeSessions = this.analytics.getLiveSessionData(this.currentEntries);
         this.dashboardPanel.webview.html = this.getLiveSessionHtml(activeSessions, true);
         break;
+      case 'blocks':
+        this.dashboardPanel.webview.html = this.getDashboardHtml(this.analytics.calculateUsageStats(this.currentEntries), [], 'blocks');
+        break;
+      case 'models':
+        this.dashboardPanel.webview.html = this.getDashboardHtml(this.analytics.calculateUsageStats(this.currentEntries), [], 'models');
+        break;
     }
   }
 
@@ -76,6 +82,9 @@ export class WebViewProvider {
         this.dashboardPanel!.title = 'Claude Usage - Weekly Reports';
         this.refreshCurrentView();
         break;
+      case 'connectToWSL':
+        vscode.commands.executeCommand('remote-wsl.newWindow');
+        break;
       case 'showMonthly':
         this.currentView = 'monthly';
         this.currentDate = message.month || new Date().toISOString().substring(0, 7);
@@ -85,6 +94,16 @@ export class WebViewProvider {
       case 'showLive':
         this.currentView = 'live';
         this.dashboardPanel!.title = 'Claude Usage - Live Sessions';
+        this.refreshCurrentView();
+        break;
+      case 'showBlocks':
+        this.currentView = 'blocks';
+        this.dashboardPanel!.title = 'Claude Usage - 5h Billing Blocks';
+        this.refreshCurrentView();
+        break;
+      case 'showModels':
+        this.currentView = 'models';
+        this.dashboardPanel!.title = 'Claude Usage - Model Usage';
         this.refreshCurrentView();
         break;
     }
@@ -362,12 +381,18 @@ export class WebViewProvider {
             <div class="nav-tab ${activeView === 'monthly' ? 'active' : ''}" onclick="switchView('monthly')">
                 📆 Monthly Report
             </div>
+            <div class="nav-tab ${activeView === 'blocks' ? 'active' : ''}" onclick="switchView('blocks')">
+                ⏰ 5h Blocks
+            </div>
+            <div class="nav-tab ${activeView === 'models' ? 'active' : ''}" onclick="switchView('models')">
+                🤖 Models
+            </div>
             <div class="nav-tab ${activeView === 'live' ? 'active' : ''}" onclick="switchView('live')">
                 🔴 Live Sessions
             </div>
         </div>
 
-        <h1>Claude Usage ${activeView === 'dashboard' ? 'Dashboard' : activeView === 'daily' ? 'Daily Report' : activeView === 'weekly' ? 'Weekly Report' : activeView === 'monthly' ? 'Monthly Report' : 'Live Sessions'}</h1>
+        <h1>Claude Usage ${activeView === 'dashboard' ? 'Dashboard' : activeView === 'daily' ? 'Daily Report' : activeView === 'weekly' ? 'Weekly Report' : activeView === 'monthly' ? 'Monthly Report' : activeView === 'blocks' ? '5h Billing Blocks' : activeView === 'models' ? 'Model Usage' : 'Live Sessions'}</h1>
         
         <!-- Debug Info -->
         <div class="debug-info" style="background: var(--vscode-panel-background); padding: 10px; margin: 10px 0; border-radius: 4px; font-size: 12px;">
@@ -376,6 +401,27 @@ export class WebViewProvider {
         </div>
         
         ${activeView === 'dashboard' ? this.getTodayStatsHtml() : ''}
+        
+        ${stats.totalTokens === 0 ? `
+        <div style="background-color: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h3 style="margin-top: 0; color: var(--vscode-inputValidation-warningForeground);">⚠️ Claude使用データが見つかりません</h3>
+            <p style="margin-bottom: 10px;">Claude Codeの使用履歴が見つかりませんでした。以下を確認してください：</p>
+            <ul style="margin-bottom: 10px;">
+                <li>Claude Codeがインストールされていること</li>
+                <li>Claude Codeを使用したことがあること</li>
+                <li>.claudeディレクトリが正しい場所にあること</li>
+                ${process.platform === 'win32' ? '<li><strong>Windowsユーザーの方へ</strong>: WSL環境でVS Codeを使用することで、Claude Codeとの統合が改善される可能性があります</li>' : ''}
+            </ul>
+            <p style="margin-bottom: 10px;">環境設定を確認するには、コマンドパレットから「Show Claude Environment Status」を実行してください。</p>
+            ${process.platform === 'win32' ? `
+            <p style="margin: 0;">
+                <button onclick="vscode.postMessage({command: 'connectToWSL'})" style="padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer;">
+                    WSLに接続
+                </button>
+            </p>
+            ` : ''}
+        </div>
+        ` : ''}
         
         <div class="stats-grid">
             <div class="stat-card">
@@ -425,6 +471,8 @@ export class WebViewProvider {
         ${activeView === 'daily' ? this.getDailyListHtml() : ''}
         ${activeView === 'weekly' ? this.getWeeklyListHtml() : ''}
         ${activeView === 'monthly' ? this.getMonthlyListHtml() : ''}
+        ${activeView === 'blocks' ? this.getBillingBlocksHtml() : ''}
+        ${activeView === 'models' ? this.getModelUsageHtml() : ''}
 
         ${activeView === 'dashboard' || activeView === 'live' ? `
         <h2>Recent Sessions</h2>
@@ -466,7 +514,9 @@ export class WebViewProvider {
                     command: view === 'dashboard' ? 'showDashboard' : 
                              view === 'daily' ? 'showDaily' :
                              view === 'weekly' ? 'showWeekly' :
-                             view === 'monthly' ? 'showMonthly' : 'showLive'
+                             view === 'monthly' ? 'showMonthly' :
+                             view === 'blocks' ? 'showBlocks' :
+                             view === 'models' ? 'showModels' : 'showLive'
                 });
             }
         </script>
@@ -683,75 +733,109 @@ export class WebViewProvider {
     const weeklyReport = this.analytics.generateWeeklyReport(this.currentEntries, thisWeekStart.toISOString().substring(0, 10));
     const monthlyReport = this.analytics.generateMonthlyReport(this.currentEntries, thisMonth);
     
+    // Calculate daily averages
+    const daysInWeek = today.getDay() || 7; // If Sunday (0), use 7
+    const daysInMonth = today.getDate();
+    
+    const weeklyDailyAvg = {
+      tokens: Math.round(weeklyReport.stats.totalTokens / daysInWeek),
+      cost: weeklyReport.stats.totalCost / daysInWeek,
+      sessions: weeklyReport.stats.sessions / daysInWeek
+    };
+    
+    const monthlyDailyAvg = {
+      tokens: Math.round(monthlyReport.stats.totalTokens / daysInMonth),
+      cost: monthlyReport.stats.totalCost / daysInMonth,
+      sessions: monthlyReport.stats.sessions / daysInMonth
+    };
+    
+    // Calculate percentages compared to averages
+    const weeklyComparison = {
+      tokens: weeklyDailyAvg.tokens > 0 ? Math.round((todayStats.totalTokens / weeklyDailyAvg.tokens - 1) * 100) : 0,
+      cost: weeklyDailyAvg.cost > 0 ? Math.round((todayStats.totalCost / weeklyDailyAvg.cost - 1) * 100) : 0,
+      sessions: weeklyDailyAvg.sessions > 0 ? Math.round((todayStats.sessions / weeklyDailyAvg.sessions - 1) * 100) : 0
+    };
+    
+    const monthlyComparison = {
+      tokens: monthlyDailyAvg.tokens > 0 ? Math.round((todayStats.totalTokens / monthlyDailyAvg.tokens - 1) * 100) : 0,
+      cost: monthlyDailyAvg.cost > 0 ? Math.round((todayStats.totalCost / monthlyDailyAvg.cost - 1) * 100) : 0,
+      sessions: monthlyDailyAvg.sessions > 0 ? Math.round((todayStats.sessions / monthlyDailyAvg.sessions - 1) * 100) : 0
+    };
+    
+    const formatComparison = (value: number) => {
+      if (value > 0) return `<span class="trend-up">+${value}%</span>`;
+      if (value < 0) return `<span class="trend-down">${value}%</span>`;
+      return `<span class="trend-neutral">±0%</span>`;
+    };
+    
     return `
     <div class="today-stats">
       <h2>📊 利用状況比較</h2>
       
-      <!-- Comparison Grid -->
-      <div class="comparison-grid">
-        <div class="comparison-section">
-          <h3>📅 今日</h3>
-          <div class="comparison-stats">
-            <div class="comparison-stat">
-              <div class="comparison-value">${todayStats.totalTokens.toLocaleString()}</div>
-              <div class="comparison-label">トークン</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value cost">$${todayStats.totalCost.toFixed(4)}</div>
-              <div class="comparison-label">コスト</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value">${todayStats.sessions}</div>
-              <div class="comparison-label">セッション</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value">${Math.round(todayStats.averageTokensPerSession || 0).toLocaleString()}</div>
-              <div class="comparison-label">平均/セッション</div>
-            </div>
+      <!-- Enhanced Comparison Table -->
+      <table class="comparison-table-enhanced">
+        <thead>
+          <tr>
+            <th>指標</th>
+            <th class="highlight-today">📅 今日</th>
+            <th>週平均/日</th>
+            <th>週平均比</th>
+            <th>月平均/日</th>
+            <th>月平均比</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="metric-name">💬 トークン数</td>
+            <td class="highlight-today">${todayStats.totalTokens.toLocaleString()}</td>
+            <td>${weeklyDailyAvg.tokens.toLocaleString()}</td>
+            <td>${formatComparison(weeklyComparison.tokens)}</td>
+            <td>${monthlyDailyAvg.tokens.toLocaleString()}</td>
+            <td>${formatComparison(monthlyComparison.tokens)}</td>
+          </tr>
+          <tr>
+            <td class="metric-name">💰 コスト</td>
+            <td class="highlight-today cost">$${todayStats.totalCost.toFixed(4)}</td>
+            <td class="cost">$${weeklyDailyAvg.cost.toFixed(4)}</td>
+            <td>${formatComparison(weeklyComparison.cost)}</td>
+            <td class="cost">$${monthlyDailyAvg.cost.toFixed(4)}</td>
+            <td>${formatComparison(monthlyComparison.cost)}</td>
+          </tr>
+          <tr>
+            <td class="metric-name">📊 セッション数</td>
+            <td class="highlight-today">${todayStats.sessions}</td>
+            <td>${weeklyDailyAvg.sessions.toFixed(1)}</td>
+            <td>${formatComparison(weeklyComparison.sessions)}</td>
+            <td>${monthlyDailyAvg.sessions.toFixed(1)}</td>
+            <td>${formatComparison(monthlyComparison.sessions)}</td>
+          </tr>
+          <tr>
+            <td class="metric-name">⚡ 効率性</td>
+            <td class="highlight-today">${Math.round(todayStats.averageTokensPerSession || 0).toLocaleString()}</td>
+            <td>${Math.round(weeklyReport.stats.averageTokensPerSession || 0).toLocaleString()}</td>
+            <td>-</td>
+            <td>${Math.round(monthlyReport.stats.averageTokensPerSession || 0).toLocaleString()}</td>
+            <td>-</td>
+          </tr>
+        </tbody>
+      </table>
+      
+      <!-- Summary Cards -->
+      <div class="summary-cards">
+        <div class="summary-card">
+          <h4>📅 今週の状況 (${daysInWeek}日間)</h4>
+          <div class="summary-content">
+            <div>合計: ${weeklyReport.stats.totalTokens.toLocaleString()} トークン</div>
+            <div class="cost">合計: $${weeklyReport.stats.totalCost.toFixed(2)}</div>
+            <div>予測月額: $${(weeklyReport.stats.totalCost / daysInWeek * 30).toFixed(2)}</div>
           </div>
         </div>
-        
-        <div class="comparison-section">
-          <h3>📅 今週</h3>
-          <div class="comparison-stats">
-            <div class="comparison-stat">
-              <div class="comparison-value">${weeklyReport.stats.totalTokens.toLocaleString()}</div>
-              <div class="comparison-label">トークン</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value cost">$${weeklyReport.stats.totalCost.toFixed(4)}</div>
-              <div class="comparison-label">コスト</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value">${weeklyReport.stats.sessions}</div>
-              <div class="comparison-label">セッション</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value">${Math.round(weeklyReport.stats.averageTokensPerSession || 0).toLocaleString()}</div>
-              <div class="comparison-label">平均/セッション</div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="comparison-section">
-          <h3>📆 今月</h3>
-          <div class="comparison-stats">
-            <div class="comparison-stat">
-              <div class="comparison-value">${monthlyReport.stats.totalTokens.toLocaleString()}</div>
-              <div class="comparison-label">トークン</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value cost">$${monthlyReport.stats.totalCost.toFixed(4)}</div>
-              <div class="comparison-label">コスト</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value">${monthlyReport.stats.sessions}</div>
-              <div class="comparison-label">セッション</div>
-            </div>
-            <div class="comparison-stat">
-              <div class="comparison-value">${Math.round(monthlyReport.stats.averageTokensPerSession || 0).toLocaleString()}</div>
-              <div class="comparison-label">平均/セッション</div>
-            </div>
+        <div class="summary-card">
+          <h4>📆 今月の状況 (${daysInMonth}日間)</h4>
+          <div class="summary-content">
+            <div>合計: ${monthlyReport.stats.totalTokens.toLocaleString()} トークン</div>
+            <div class="cost">合計: $${monthlyReport.stats.totalCost.toFixed(2)}</div>
+            <div>予測月末: $${(monthlyReport.stats.totalCost / daysInMonth * 30).toFixed(2)}</div>
           </div>
         </div>
       </div>
@@ -770,52 +854,67 @@ export class WebViewProvider {
         padding: 20px;
         margin-bottom: 20px;
       }
-      .comparison-grid {
+      .comparison-table-enhanced {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+        font-size: 14px;
+      }
+      .comparison-table-enhanced th,
+      .comparison-table-enhanced td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      .comparison-table-enhanced th {
+        background: var(--vscode-panel-background);
+        font-weight: bold;
+        color: var(--vscode-charts-blue);
+        font-size: 13px;
+      }
+      .comparison-table-enhanced th.highlight-today {
+        background: var(--vscode-charts-blue);
+        color: var(--vscode-editor-background);
+      }
+      .comparison-table-enhanced td.highlight-today {
+        background: rgba(var(--vscode-charts-blue), 0.1);
+        font-weight: bold;
+      }
+      .metric-name {
+        font-weight: 500;
+        color: var(--vscode-foreground);
+      }
+      .trend-up {
+        color: var(--vscode-charts-green);
+        font-weight: bold;
+      }
+      .trend-down {
+        color: var(--vscode-charts-red);
+        font-weight: bold;
+      }
+      .trend-neutral {
+        color: var(--vscode-descriptionForeground);
+      }
+      .summary-cards {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 20px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 15px;
         margin-bottom: 20px;
       }
-      .comparison-section {
+      .summary-card {
         background: var(--vscode-panel-background);
         border: 1px solid var(--vscode-panel-border);
-        border-radius: 8px;
-        padding: 16px;
+        border-radius: 6px;
+        padding: 15px;
       }
-      .comparison-section h3 {
-        margin: 0 0 15px 0;
+      .summary-card h4 {
+        margin: 0 0 10px 0;
         color: var(--vscode-charts-blue);
-        font-size: 16px;
-        text-align: center;
-        border-bottom: 1px solid var(--vscode-panel-border);
-        padding-bottom: 8px;
+        font-size: 14px;
       }
-      .comparison-stats {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 12px;
-      }
-      .comparison-stat {
-        text-align: center;
-        padding: 8px;
-        background: var(--vscode-editor-background);
-        border-radius: 4px;
-        border: 1px solid var(--vscode-input-border);
-      }
-      .comparison-value {
-        font-size: 18px;
-        font-weight: bold;
-        color: var(--vscode-charts-green);
-        margin-bottom: 4px;
-      }
-      .comparison-value.cost {
-        color: var(--vscode-charts-orange);
-      }
-      .comparison-label {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+      .summary-content div {
+        margin: 5px 0;
+        font-size: 13px;
       }
       .insights-card {
         background: var(--vscode-panel-background);
@@ -832,6 +931,9 @@ export class WebViewProvider {
         margin: 0;
         line-height: 1.5;
         color: var(--vscode-foreground);
+      }
+      .cost {
+        color: var(--vscode-charts-orange);
       }
     </style>
     `;
@@ -850,55 +952,81 @@ export class WebViewProvider {
     }
   }
 
+  private calculatePeriodStats(reports: any[]): any {
+    const validReports = reports.filter(r => r.stats.sessions > 0);
+    const tokens = validReports.map(r => r.stats.totalTokens);
+    const costs = validReports.map(r => r.stats.totalCost);
+    const avgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
+    
+    return {
+      avgTokens: tokens.length > 0 ? Math.round(tokens.reduce((a, b) => a + b, 0) / tokens.length) : 0,
+      medianTokens: Math.round(this.calculateMedian(tokens)),
+      avgCost: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) / costs.length : 0,
+      medianCost: this.calculateMedian(costs),
+      avgSessionEfficiency: avgTokens.length > 0 ? Math.round(avgTokens.reduce((a, b) => a + b, 0) / avgTokens.length) : 0,
+      medianSessionEfficiency: Math.round(this.calculateMedian(avgTokens))
+    };
+  }
+
   private getDailyListHtml(): string {
     const dailyReports = this.analytics.getRecentDays(this.currentEntries, 30);
+    const weeklyReports = this.analytics.getRecentWeeks(this.currentEntries, 12);
+    const monthlyReports = this.analytics.getRecentMonths(this.currentEntries, 12);
     
-    // Calculate overall statistics for the daily reports
-    const validReports = dailyReports.filter(r => r.stats.sessions > 0);
-    const dailyTokens = validReports.map(r => r.stats.totalTokens);
-    const dailyCosts = validReports.map(r => r.stats.totalCost);
-    const dailyAvgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
-    
-    const avgDailyTokens = dailyTokens.length > 0 ? Math.round(dailyTokens.reduce((a, b) => a + b, 0) / dailyTokens.length) : 0;
-    const medianDailyTokens = Math.round(this.calculateMedian(dailyTokens));
-    const avgDailyCost = dailyCosts.length > 0 ? dailyCosts.reduce((a, b) => a + b, 0) / dailyCosts.length : 0;
-    const medianDailyCost = this.calculateMedian(dailyCosts);
-    const avgOfAvgTokensPerSession = dailyAvgTokens.length > 0 ? Math.round(dailyAvgTokens.reduce((a, b) => a + b, 0) / dailyAvgTokens.length) : 0;
-    const medianOfAvgTokensPerSession = Math.round(this.calculateMedian(dailyAvgTokens));
+    // Calculate statistics for each period
+    const dailyStats = this.calculatePeriodStats(dailyReports);
+    const weeklyStats = this.calculatePeriodStats(weeklyReports);
+    const monthlyStats = this.calculatePeriodStats(monthlyReports);
     
     return `
     <div class="list-container">
       <h2>📅 Daily Reports (Last 30 Days)</h2>
       
-      <!-- Summary Statistics -->
-      <div class="period-summary">
-        <h3>📊 30日間の統計サマリー</h3>
-        <div class="summary-grid">
-          <div class="summary-card">
-            <div class="summary-value">${avgDailyTokens.toLocaleString()}</div>
-            <div class="summary-label">平均日次トークン</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${medianDailyTokens.toLocaleString()}</div>
-            <div class="summary-label">中央値日次トークン</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value cost">$${avgDailyCost.toFixed(4)}</div>
-            <div class="summary-label">平均日次コスト</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value cost">$${medianDailyCost.toFixed(4)}</div>
-            <div class="summary-label">中央値日次コスト</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${avgOfAvgTokensPerSession.toLocaleString()}</div>
-            <div class="summary-label">平均セッション効率</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${medianOfAvgTokensPerSession.toLocaleString()}</div>
-            <div class="summary-label">中央値セッション効率</div>
-          </div>
-        </div>
+      <!-- Comparison Statistics Table -->
+      <div class="comparison-summary">
+        <h3>📊 期間比較統計</h3>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>期間</th>
+              <th>平均トークン</th>
+              <th>中央値トークン</th>
+              <th>平均コスト</th>
+              <th>中央値コスト</th>
+              <th>平均セッション効率</th>
+              <th>中央値セッション効率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="daily-row" style="background-color: var(--vscode-list-activeSelectionBackground) !important;">
+              <td><strong>📅 日次 (30日) ← 現在のビュー</strong></td>
+              <td>${dailyStats.avgTokens.toLocaleString()}</td>
+              <td>${dailyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${dailyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${dailyStats.medianCost.toFixed(4)}</td>
+              <td>${dailyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${dailyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+            <tr class="weekly-row">
+              <td><strong>📅 週次 (12週)</strong></td>
+              <td>${weeklyStats.avgTokens.toLocaleString()}</td>
+              <td>${weeklyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${weeklyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${weeklyStats.medianCost.toFixed(4)}</td>
+              <td>${weeklyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${weeklyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+            <tr class="monthly-row">
+              <td><strong>📆 月次 (12ヶ月)</strong></td>
+              <td>${monthlyStats.avgTokens.toLocaleString()}</td>
+              <td>${monthlyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${monthlyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${monthlyStats.medianCost.toFixed(4)}</td>
+              <td>${monthlyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${monthlyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
       
       <table class="report-table">
@@ -913,7 +1041,7 @@ export class WebViewProvider {
           </tr>
         </thead>
         <tbody>
-          ${dailyReports.map(report => `
+          ${dailyReports.slice().reverse().map(report => `
             <tr>
               <td>${report.date}</td>
               <td>${report.stats.totalTokens.toLocaleString()}</td>
@@ -927,48 +1055,571 @@ export class WebViewProvider {
       </table>
     </div>
     
+    ${this.getSharedStyles()}
+    `;
+  }
+
+  private getWeeklyListHtml(): string {
+    const dailyReports = this.analytics.getRecentDays(this.currentEntries, 30);
+    const weeklyReports = this.analytics.getRecentWeeks(this.currentEntries, 12);
+    const monthlyReports = this.analytics.getRecentMonths(this.currentEntries, 12);
+    
+    // Calculate statistics for each period
+    const dailyStats = this.calculatePeriodStats(dailyReports);
+    const weeklyStats = this.calculatePeriodStats(weeklyReports);
+    const monthlyStats = this.calculatePeriodStats(monthlyReports);
+    
+    return `
+    <div class="list-container">
+      <h2>📅 Weekly Reports (Last 12 Weeks)</h2>
+      
+      <!-- Comparison Statistics Table -->
+      <div class="comparison-summary">
+        <h3>📊 期間比較統計</h3>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>期間</th>
+              <th>平均トークン</th>
+              <th>中央値トークン</th>
+              <th>平均コスト</th>
+              <th>中央値コスト</th>
+              <th>平均セッション効率</th>
+              <th>中央値セッション効率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="daily-row">
+              <td><strong>📅 日次 (30日)</strong></td>
+              <td>${dailyStats.avgTokens.toLocaleString()}</td>
+              <td>${dailyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${dailyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${dailyStats.medianCost.toFixed(4)}</td>
+              <td>${dailyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${dailyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+            <tr class="weekly-row" style="background-color: var(--vscode-list-activeSelectionBackground) !important;">
+              <td><strong>📅 週次 (12週) ← 現在のビュー</strong></td>
+              <td>${weeklyStats.avgTokens.toLocaleString()}</td>
+              <td>${weeklyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${weeklyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${weeklyStats.medianCost.toFixed(4)}</td>
+              <td>${weeklyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${weeklyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+            <tr class="monthly-row">
+              <td><strong>📆 月次 (12ヶ月)</strong></td>
+              <td>${monthlyStats.avgTokens.toLocaleString()}</td>
+              <td>${monthlyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${monthlyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${monthlyStats.medianCost.toFixed(4)}</td>
+              <td>${monthlyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${monthlyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Week</th>
+            <th>Tokens</th>
+            <th>Cost</th>
+            <th>Sessions</th>
+            <th>Avg/Session</th>
+            <th>Median/Session</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${weeklyReports.slice().reverse().map(report => `
+            <tr>
+              <td>${report.weekStart} - ${report.weekEnd}</td>
+              <td>${report.stats.totalTokens.toLocaleString()}</td>
+              <td class="cost">$${report.stats.totalCost.toFixed(4)}</td>
+              <td>${report.stats.sessions}</td>
+              <td>${Math.round(report.stats.averageTokensPerSession || 0).toLocaleString()}</td>
+              <td>${Math.round(report.stats.medianTokensPerSession || 0).toLocaleString()}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    
+    ${this.getSharedStyles()}
+    `;
+  }
+
+  private getMonthlyListHtml(): string {
+    const dailyReports = this.analytics.getRecentDays(this.currentEntries, 30);
+    const weeklyReports = this.analytics.getRecentWeeks(this.currentEntries, 12);
+    const monthlyReports = this.analytics.getRecentMonths(this.currentEntries, 12);
+    
+    // Calculate statistics for each period
+    const dailyStats = this.calculatePeriodStats(dailyReports);
+    const weeklyStats = this.calculatePeriodStats(weeklyReports);
+    const monthlyStats = this.calculatePeriodStats(monthlyReports);
+    
+    return `
+    <div class="list-container">
+      <h2>📆 Monthly Reports (Last 12 Months)</h2>
+      
+      <!-- Comparison Statistics Table -->
+      <div class="comparison-summary">
+        <h3>📊 期間比較統計</h3>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>期間</th>
+              <th>平均トークン</th>
+              <th>中央値トークン</th>
+              <th>平均コスト</th>
+              <th>中央値コスト</th>
+              <th>平均セッション効率</th>
+              <th>中央値セッション効率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="daily-row">
+              <td><strong>📅 日次 (30日)</strong></td>
+              <td>${dailyStats.avgTokens.toLocaleString()}</td>
+              <td>${dailyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${dailyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${dailyStats.medianCost.toFixed(4)}</td>
+              <td>${dailyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${dailyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+            <tr class="weekly-row">
+              <td><strong>📅 週次 (12週)</strong></td>
+              <td>${weeklyStats.avgTokens.toLocaleString()}</td>
+              <td>${weeklyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${weeklyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${weeklyStats.medianCost.toFixed(4)}</td>
+              <td>${weeklyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${weeklyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+            <tr class="monthly-row" style="background-color: var(--vscode-list-activeSelectionBackground) !important;">
+              <td><strong>📆 月次 (12ヶ月) ← 現在のビュー</strong></td>
+              <td>${monthlyStats.avgTokens.toLocaleString()}</td>
+              <td>${monthlyStats.medianTokens.toLocaleString()}</td>
+              <td class="cost">$${monthlyStats.avgCost.toFixed(4)}</td>
+              <td class="cost">$${monthlyStats.medianCost.toFixed(4)}</td>
+              <td>${monthlyStats.avgSessionEfficiency.toLocaleString()}</td>
+              <td>${monthlyStats.medianSessionEfficiency.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <table class="report-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Tokens</th>
+            <th>Cost</th>
+            <th>Sessions</th>
+            <th>Avg/Session</th>
+            <th>Median/Session</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${monthlyReports.slice().reverse().map(report => `
+            <tr>
+              <td>${report.month}</td>
+              <td>${report.stats.totalTokens.toLocaleString()}</td>
+              <td class="cost">$${report.stats.totalCost.toFixed(4)}</td>
+              <td>${report.stats.sessions}</td>
+              <td>${Math.round(report.stats.averageTokensPerSession || 0).toLocaleString()}</td>
+              <td>${Math.round(report.stats.medianTokensPerSession || 0).toLocaleString()}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    
+    ${this.getSharedStyles()}
+    `;
+  }
+
+  private getBillingBlocksHtml(): string {
+    const blocks = this.analytics.getBillingBlocks(this.currentEntries, 10);
+    
+    return `
+    <div class="list-container">
+      <h2>⏰ 5時間課金ブロック (最新10個)</h2>
+      
+      ${blocks.length === 0 ? `
+        <div style="text-align: center; padding: 40px; color: var(--vscode-descriptionForeground);">
+          まだ課金ブロックはありません。Claude Codeを使い始めると表示されます。
+        </div>
+      ` : `
+        ${blocks.map((block, index) => `
+          <div class="block-card ${block.isActive ? 'active-block' : 'inactive-block'}">
+            <div class="block-header">
+              <h3>${block.isActive ? '🟢 アクティブブロック' : '⚪ 完了済みブロック'} #${index + 1}</h3>
+              <div class="block-time">
+                ${new Date(block.startTime).toLocaleString()} - ${new Date(block.endTime).toLocaleString()}
+              </div>
+            </div>
+            
+            <div class="block-stats">
+              <div class="block-stat">
+                <div class="block-stat-value">${block.totalTokens.toLocaleString()}</div>
+                <div class="block-stat-label">総トークン数</div>
+              </div>
+              <div class="block-stat">
+                <div class="block-stat-value cost">$${block.totalCost.toFixed(4)}</div>
+                <div class="block-stat-label">総コスト</div>
+              </div>
+              <div class="block-stat">
+                <div class="block-stat-value">${block.sessions.length}</div>
+                <div class="block-stat-label">セッション数</div>
+              </div>
+              ${block.isActive ? `
+                <div class="block-stat">
+                  <div class="block-stat-value">${Math.floor(block.remainingTime / 60)}h ${block.remainingTime % 60}m</div>
+                  <div class="block-stat-label">残り時間</div>
+                </div>
+                <div class="block-stat">
+                  <div class="block-stat-value">${block.tokenRate.toLocaleString()}/min</div>
+                  <div class="block-stat-label">トークンレート</div>
+                </div>
+                <div class="block-stat">
+                  <div class="block-stat-value cost">$${block.projectedCost.toFixed(4)}</div>
+                  <div class="block-stat-label">予想最終コスト</div>
+                </div>
+              ` : ''}
+            </div>
+            
+            ${block.sessions.length > 0 ? `
+              <details class="block-sessions">
+                <summary>セッション詳細 (${block.sessions.length}個)</summary>
+                <table class="sessions-table">
+                  <thead>
+                    <tr>
+                      <th>プロジェクト</th>
+                      <th>開始時刻</th>
+                      <th>モデル</th>
+                      <th>トークン</th>
+                      <th>コスト</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${block.sessions.map(session => `
+                      <tr>
+                        <td>${session.projectName}</td>
+                        <td>${new Date(session.startTime).toLocaleString()}</td>
+                        <td>${session.model}</td>
+                        <td>${session.totalTokens.toLocaleString()}</td>
+                        <td class="cost">$${session.totalCost.toFixed(4)}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </details>
+            ` : ''}
+          </div>
+        `).join('')}
+      `}
+    </div>
+    
+    ${this.getSharedStyles()}
+    <style>
+      .block-card {
+        background: var(--vscode-panel-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        margin: 15px 0;
+        padding: 20px;
+      }
+      .active-block {
+        border-color: var(--vscode-charts-green);
+        background: rgba(var(--vscode-charts-green), 0.05);
+      }
+      .inactive-block {
+        border-color: var(--vscode-panel-border);
+      }
+      .block-header h3 {
+        margin: 0 0 5px 0;
+        color: var(--vscode-charts-blue);
+      }
+      .block-time {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin-bottom: 15px;
+      }
+      .block-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+      .block-stat {
+        text-align: center;
+        padding: 10px;
+        background: var(--vscode-editor-background);
+        border-radius: 4px;
+        border: 1px solid var(--vscode-input-border);
+      }
+      .block-stat-value {
+        font-size: 16px;
+        font-weight: bold;
+        color: var(--vscode-charts-green);
+        margin-bottom: 4px;
+      }
+      .block-stat-label {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .block-sessions {
+        margin-top: 15px;
+      }
+      .block-sessions summary {
+        cursor: pointer;
+        font-weight: bold;
+        color: var(--vscode-charts-blue);
+        margin-bottom: 10px;
+      }
+      .block-sessions .sessions-table {
+        margin-top: 10px;
+        font-size: 12px;
+      }
+    </style>
+    `;
+  }
+
+  private getModelUsageHtml(): string {
+    const modelStats = this.analytics.getModelUsageStats(this.currentEntries);
+    const totalTokens = modelStats.reduce((sum, stat) => sum + stat.totalTokens, 0);
+    
+    return `
+    <div class="list-container">
+      <h2>🤖 モデル別使用状況</h2>
+      
+      ${modelStats.length === 0 ? `
+        <div style="text-align: center; padding: 40px; color: var(--vscode-descriptionForeground);">
+          まだモデルの使用データがありません。Claude Codeを使い始めると表示されます。
+        </div>
+      ` : `
+        <!-- Overview Cards -->
+        <div class="model-overview">
+          <div class="overview-card">
+            <div class="overview-value">${modelStats.length}</div>
+            <div class="overview-label">使用中モデル数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">${totalTokens.toLocaleString()}</div>
+            <div class="overview-label">総トークン数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">${modelStats[0]?.model.replace(/claude-/, '').replace(/-/g, ' ') || 'N/A'}</div>
+            <div class="overview-label">最多使用モデル</div>
+          </div>
+        </div>
+        
+        <!-- Model Usage Chart -->
+        <div class="model-chart">
+          ${modelStats.map((stat, index) => `
+            <div class="model-bar">
+              <div class="model-info">
+                <div class="model-name">${stat.model}</div>
+                <div class="model-percentage">${stat.percentage.toFixed(1)}%</div>
+              </div>
+              <div class="model-bar-container">
+                <div class="model-bar-fill" style="width: ${stat.percentage}%; background-color: hsl(${index * 60}, 70%, 50%);"></div>
+              </div>
+              <div class="model-details">
+                <span>${stat.totalTokens.toLocaleString()} tokens</span>
+                <span class="cost">$${stat.totalCost.toFixed(4)}</span>
+                <span>${stat.sessions} sessions</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        
+        <!-- Detailed Table -->
+        <table class="model-table">
+          <thead>
+            <tr>
+              <th>モデル</th>
+              <th>使用率</th>
+              <th>総トークン数</th>
+              <th>総コスト</th>
+              <th>セッション数</th>
+              <th>セッション平均</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${modelStats.map((stat, index) => `
+              <tr>
+                <td>
+                  <div style="display: flex; align-items: center;">
+                    <div style="width: 12px; height: 12px; background-color: hsl(${index * 60}, 70%, 50%); border-radius: 50%; margin-right: 8px;"></div>
+                    ${stat.model}
+                  </div>
+                </td>
+                <td>${stat.percentage.toFixed(1)}%</td>
+                <td>${stat.totalTokens.toLocaleString()}</td>
+                <td class="cost">$${stat.totalCost.toFixed(4)}</td>
+                <td>${stat.sessions}</td>
+                <td>${stat.sessions > 0 ? Math.round(stat.totalTokens / stat.sessions).toLocaleString() : '0'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `}
+    </div>
+    
+    ${this.getSharedStyles()}
+    <style>
+      .model-overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 25px;
+      }
+      .overview-card {
+        background: var(--vscode-panel-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+      }
+      .overview-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: var(--vscode-charts-blue);
+        margin-bottom: 5px;
+      }
+      .overview-label {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .model-chart {
+        background: var(--vscode-panel-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 25px;
+      }
+      .model-bar {
+        margin-bottom: 15px;
+        padding: 10px 0;
+      }
+      .model-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+      }
+      .model-name {
+        font-weight: bold;
+        color: var(--vscode-foreground);
+      }
+      .model-percentage {
+        font-size: 14px;
+        color: var(--vscode-charts-blue);
+        font-weight: bold;
+      }
+      .model-bar-container {
+        height: 8px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 5px;
+      }
+      .model-bar-fill {
+        height: 100%;
+        transition: width 0.3s ease;
+      }
+      .model-details {
+        display: flex;
+        gap: 15px;
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .model-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 15px;
+      }
+      .model-table th, .model-table td {
+        text-align: left;
+        padding: 12px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      .model-table th {
+        background-color: var(--vscode-panel-background);
+        font-weight: bold;
+        font-size: 13px;
+        color: var(--vscode-charts-blue);
+      }
+      .model-table tr:hover {
+        background-color: var(--vscode-list-hoverBackground);
+      }
+    </style>
+    `;
+  }
+
+  private getSharedStyles(): string {
+    return `
     <style>
       .list-container {
         margin: 20px 0;
       }
-      .period-summary {
+      .comparison-summary {
         background: var(--vscode-panel-background);
         border: 1px solid var(--vscode-panel-border);
         border-radius: 8px;
         padding: 20px;
         margin-bottom: 20px;
       }
-      .period-summary h3 {
+      .comparison-summary h3 {
         margin: 0 0 15px 0;
         color: var(--vscode-charts-blue);
         font-size: 16px;
-      }
-      .summary-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-      }
-      .summary-card {
-        background: var(--vscode-editor-background);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 6px;
-        padding: 12px;
         text-align: center;
       }
-      .summary-value {
-        font-size: 20px;
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0;
+        font-size: 13px;
+      }
+      .comparison-table th, .comparison-table td {
+        text-align: center;
+        padding: 12px 8px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        border-right: 1px solid var(--vscode-panel-border);
+      }
+      .comparison-table th {
+        background-color: var(--vscode-editor-background);
         font-weight: bold;
-        color: var(--vscode-charts-green);
-        margin-bottom: 4px;
+        font-size: 12px;
+        color: var(--vscode-charts-blue);
       }
-      .summary-value.cost {
-        color: var(--vscode-charts-orange);
+      .comparison-table td:first-child {
+        text-align: left;
+        font-weight: 500;
       }
-      .summary-label {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+      .comparison-table th:last-child, .comparison-table td:last-child {
+        border-right: none;
+      }
+      .daily-row {
+        background-color: var(--vscode-editor-background);
+      }
+      .weekly-row {
+        background-color: rgba(var(--vscode-charts-blue), 0.05);
+      }
+      .monthly-row {
+        background-color: rgba(var(--vscode-charts-purple), 0.05);
+      }
+      .comparison-table tr:hover {
+        background-color: var(--vscode-list-hoverBackground) !important;
       }
       .report-table {
         width: 100%;
@@ -988,167 +1639,13 @@ export class WebViewProvider {
       .report-table tr:hover {
         background-color: var(--vscode-list-hoverBackground);
       }
+      .cost {
+        color: var(--vscode-charts-green);
+      }
     </style>
     `;
   }
 
-  private getWeeklyListHtml(): string {
-    const weeklyReports = this.analytics.getRecentWeeks(this.currentEntries, 12);
-    
-    // Calculate overall statistics for the weekly reports
-    const validReports = weeklyReports.filter(r => r.stats.sessions > 0);
-    const weeklyTokens = validReports.map(r => r.stats.totalTokens);
-    const weeklyCosts = validReports.map(r => r.stats.totalCost);
-    const weeklyAvgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
-    
-    const avgWeeklyTokens = weeklyTokens.length > 0 ? Math.round(weeklyTokens.reduce((a, b) => a + b, 0) / weeklyTokens.length) : 0;
-    const medianWeeklyTokens = Math.round(this.calculateMedian(weeklyTokens));
-    const avgWeeklyCost = weeklyCosts.length > 0 ? weeklyCosts.reduce((a, b) => a + b, 0) / weeklyCosts.length : 0;
-    const medianWeeklyCost = this.calculateMedian(weeklyCosts);
-    const avgOfAvgTokensPerSession = weeklyAvgTokens.length > 0 ? Math.round(weeklyAvgTokens.reduce((a, b) => a + b, 0) / weeklyAvgTokens.length) : 0;
-    const medianOfAvgTokensPerSession = Math.round(this.calculateMedian(weeklyAvgTokens));
-    
-    return `
-    <div class="list-container">
-      <h2>📅 Weekly Reports (Last 12 Weeks)</h2>
-      
-      <!-- Summary Statistics -->
-      <div class="period-summary">
-        <h3>📊 12週間の統計サマリー</h3>
-        <div class="summary-grid">
-          <div class="summary-card">
-            <div class="summary-value">${avgWeeklyTokens.toLocaleString()}</div>
-            <div class="summary-label">平均週次トークン</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${medianWeeklyTokens.toLocaleString()}</div>
-            <div class="summary-label">中央値週次トークン</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value cost">$${avgWeeklyCost.toFixed(4)}</div>
-            <div class="summary-label">平均週次コスト</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value cost">$${medianWeeklyCost.toFixed(4)}</div>
-            <div class="summary-label">中央値週次コスト</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${avgOfAvgTokensPerSession.toLocaleString()}</div>
-            <div class="summary-label">平均セッション効率</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${medianOfAvgTokensPerSession.toLocaleString()}</div>
-            <div class="summary-label">中央値セッション効率</div>
-          </div>
-        </div>
-      </div>
-      
-      <table class="report-table">
-        <thead>
-          <tr>
-            <th>Week</th>
-            <th>Tokens</th>
-            <th>Cost</th>
-            <th>Sessions</th>
-            <th>Avg/Session</th>
-            <th>Median/Session</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${weeklyReports.map(report => `
-            <tr>
-              <td>${report.weekStart} - ${report.weekEnd}</td>
-              <td>${report.stats.totalTokens.toLocaleString()}</td>
-              <td class="cost">$${report.stats.totalCost.toFixed(4)}</td>
-              <td>${report.stats.sessions}</td>
-              <td>${Math.round(report.stats.averageTokensPerSession || 0).toLocaleString()}</td>
-              <td>${Math.round(report.stats.medianTokensPerSession || 0).toLocaleString()}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-    `;
-  }
-
-  private getMonthlyListHtml(): string {
-    const monthlyReports = this.analytics.getRecentMonths(this.currentEntries, 12);
-    
-    // Calculate overall statistics for the monthly reports
-    const validReports = monthlyReports.filter(r => r.stats.sessions > 0);
-    const monthlyTokens = validReports.map(r => r.stats.totalTokens);
-    const monthlyCosts = validReports.map(r => r.stats.totalCost);
-    const monthlyAvgTokens = validReports.map(r => r.stats.averageTokensPerSession || 0);
-    
-    const avgMonthlyTokens = monthlyTokens.length > 0 ? Math.round(monthlyTokens.reduce((a, b) => a + b, 0) / monthlyTokens.length) : 0;
-    const medianMonthlyTokens = Math.round(this.calculateMedian(monthlyTokens));
-    const avgMonthlyCost = monthlyCosts.length > 0 ? monthlyCosts.reduce((a, b) => a + b, 0) / monthlyCosts.length : 0;
-    const medianMonthlyCost = this.calculateMedian(monthlyCosts);
-    const avgOfAvgTokensPerSession = monthlyAvgTokens.length > 0 ? Math.round(monthlyAvgTokens.reduce((a, b) => a + b, 0) / monthlyAvgTokens.length) : 0;
-    const medianOfAvgTokensPerSession = Math.round(this.calculateMedian(monthlyAvgTokens));
-    
-    return `
-    <div class="list-container">
-      <h2>📆 Monthly Reports (Last 12 Months)</h2>
-      
-      <!-- Summary Statistics -->
-      <div class="period-summary">
-        <h3>📊 12ヶ月の統計サマリー</h3>
-        <div class="summary-grid">
-          <div class="summary-card">
-            <div class="summary-value">${avgMonthlyTokens.toLocaleString()}</div>
-            <div class="summary-label">平均月次トークン</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${medianMonthlyTokens.toLocaleString()}</div>
-            <div class="summary-label">中央値月次トークン</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value cost">$${avgMonthlyCost.toFixed(4)}</div>
-            <div class="summary-label">平均月次コスト</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value cost">$${medianMonthlyCost.toFixed(4)}</div>
-            <div class="summary-label">中央値月次コスト</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${avgOfAvgTokensPerSession.toLocaleString()}</div>
-            <div class="summary-label">平均セッション効率</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-value">${medianOfAvgTokensPerSession.toLocaleString()}</div>
-            <div class="summary-label">中央値セッション効率</div>
-          </div>
-        </div>
-      </div>
-      
-      <table class="report-table">
-        <thead>
-          <tr>
-            <th>Month</th>
-            <th>Tokens</th>
-            <th>Cost</th>
-            <th>Sessions</th>
-            <th>Avg/Session</th>
-            <th>Median/Session</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${monthlyReports.map(report => `
-            <tr>
-              <td>${report.month}</td>
-              <td>${report.stats.totalTokens.toLocaleString()}</td>
-              <td class="cost">$${report.stats.totalCost.toFixed(4)}</td>
-              <td>${report.stats.sessions}</td>
-              <td>${Math.round(report.stats.averageTokensPerSession || 0).toLocaleString()}</td>
-              <td>${Math.round(report.stats.medianTokensPerSession || 0).toLocaleString()}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-    `;
-  }
 
   createSponsorWebView(context: vscode.ExtensionContext): vscode.WebviewPanel {
     // 既存のスポンサーパネルがある場合は再利用

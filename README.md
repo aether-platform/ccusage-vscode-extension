@@ -53,25 +53,44 @@ The extension automatically detects Claude projects directories, but you can con
 
 ### Settings
 
+#### Path Detection Settings
 - **`ccusage.claudeProjectsPath`**: Custom path to Claude projects directory
 - **`ccusage.executionHost`**: Execution environment (`auto`, `local`, `wsl`, `container`)
+- **`ccusage.quickMode`**: Enable quick mode - only check common Claude paths (default: true)
+- **`ccusage.enableWSLDetection`**: Enable WSL path detection from Windows (default: false)
+- **`ccusage.stopOnFirstValidPath`**: Stop searching after finding the first valid Claude path (default: true)
+- **`ccusage.verboseLogging`**: Enable verbose logging for debugging path detection (default: false)
+
+#### WSL-Specific Settings
 - **`ccusage.wslDistribution`**: WSL distribution name (default: "Ubuntu")
 - **`ccusage.wslWindowsUsername`**: Windows username for WSL environment (auto-detected if empty)
+- **`ccusage.wslClaudePath`**: Manual WSL Claude path (e.g., `\\\\wsl$\\Ubuntu\\root\\.claude\\projects`)
+
+#### Other Settings
 - **`ccusage.containerWorkspaceFolder`**: Workspace folder path in container
 - **`ccusage.refreshInterval`**: Refresh interval for live monitoring (default: 5000ms)
 - **`ccusage.showStatusBar`**: Show/hide usage stats in status bar (default: true)
 
 ### Auto-detection
 
-The extension automatically searches for Claude projects in:
+The extension uses an optimized path detection system:
 
-**Local Environment:**
+#### Quick Mode (Default)
+When `quickMode` is enabled (default), the extension only checks the most common paths:
 - `~/.claude/projects/`
 - `~/.config/claude/projects/`
+- `%APPDATA%\Roaming\Claude\` (Windows)
 
-**WSL Environment:**
-- `/mnt/c/Users/{username}/.claude/projects/`
-- `/mnt/c/Users/{username}/.config/claude/projects/`
+#### Full Search Mode
+When `quickMode` is disabled, additional paths are checked:
+- All Windows AppData variations
+- WSL paths (if `enableWSLDetection` is true)
+- Multiple user directories
+
+#### Performance Optimization
+- **Stop on First**: By default, stops searching after finding the first valid path
+- **WSL Detection**: Disabled by default to improve performance on Windows
+- **Verbose Logging**: Disabled by default to reduce console output
 - `/mnt/c/Users/{username}/AppData/Roaming/claude/projects/`
 - `/mnt/c/Users/{username}/AppData/Local/claude/projects/`
 - `~/.claude/projects/` (Linux home)

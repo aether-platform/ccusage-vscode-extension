@@ -10,10 +10,23 @@ export interface HostEnvironment {
 }
 
 export class HostResolver {
+  private static config = vscode.workspace.getConfiguration('ccusage');
+  private static verboseLogging = HostResolver.config.get<boolean>('verboseLogging', false);
+  
+  private static log(message: string, force: boolean = false) {
+    if (HostResolver.verboseLogging || force) {
+      console.log(message);
+    }
+  }
   
   static async resolveExecutionHost(): Promise<HostEnvironment> {
-    const config = vscode.workspace.getConfiguration('ccusage');
-    const executionHost = config.get<string>('executionHost', 'auto');
+    // Refresh config
+    this.config = vscode.workspace.getConfiguration('ccusage');
+    this.verboseLogging = this.config.get<boolean>('verboseLogging', false);
+    
+    const executionHost = this.config.get<string>('executionHost', 'auto');
+    
+    this.log(`[HostResolver] executionHost setting: ${executionHost}`);
     
     switch (executionHost) {
       case 'local':
@@ -29,22 +42,26 @@ export class HostResolver {
   }
 
   private static autoDetectEnvironment(): HostEnvironment {
+    this.log(`[HostResolver] Auto-detecting environment...`);
+    
     // Check if running in Remote Container
     if (this.isRemoteContainer()) {
+      this.log(`[HostResolver] Detected: Remote Container`, true);
       return this.createContainerEnvironment();
     }
     
     // Check if running in WSL
     if (this.isWSL()) {
+      this.log(`[HostResolver] Detected: WSL`, true);
       return this.createWSLEnvironment();
     }
     
     // Default to local
+    this.log(`[HostResolver] Detected: Local`, true);
     return this.createLocalEnvironment();
   }
 
   private static isRemoteContainer(): boolean {
-    // Check for Remote Container indicators
     const remoteEnv = vscode.env.remoteName;
     const devContainer = process.env.DEVCONTAINER;
     const containerEnv = process.env.CONTAINER_ENV;
@@ -53,7 +70,6 @@ export class HostResolver {
   }
 
   private static isWSL(): boolean {
-    // Check for WSL indicators
     const platform = os.platform();
     const release = os.release();
     const wslEnv = process.env.WSL_DISTRO_NAME;
@@ -65,239 +81,202 @@ export class HostResolver {
     );
   }
 
-  private static prioritizeWSLUsers(userDirs: string[]): string[] {
-    // Create a prioritized list of users based on various heuristics
-    const prioritized: Array<{ name: string, score: number }> = [];
+  private static createLocalEnvironment(): HostEnvironment {
+    const homedir = os.homedir();
+    const quickMode = this.config.get<boolean>('quickMode', true);
+    const stopOnFirst = this.config.get<boolean>('stopOnFirstValidPath', true);
+    const enableWSL = this.config.get<boolean>('enableWSLDetection', false);
     
-    for (const userDir of userDirs) {
-      let score = 0;
+    this.log(`[HostResolver] Local environment home directory: ${homedir}`);
+    this.log(`[HostResolver] Quick mode: ${quickMode}, Stop on first: ${stopOnFirst}, WSL detection: ${enableWSL}`);
+    
+    const paths: string[] = [];
+    const foundPaths: string[] = [];
+    
+    // Priority 1: Most common Claude paths
+    const primaryPaths = [
+      path.join(homedir, '.claude', 'projects'),
+      path.join(homedir, '.config', 'claude', 'projects')
+    ];
+    
+    if (process.platform === 'win32') {
+      // Add the most common Windows paths first
+      primaryPaths.push(
+        path.join(homedir, 'AppData', 'Roaming', 'Claude', 'projects'),
+        path.join(homedir, 'AppData', 'Roaming', 'Claude')
+      );
+    }
+    
+    // Check primary paths first
+    for (const primaryPath of primaryPaths) {
+      if (this.checkAndAddPath(primaryPath, paths, foundPaths)) {
+        if (stopOnFirst && foundPaths.length > 0) {
+          this.log(`[HostResolver] Found valid path, stopping search (stopOnFirstValidPath=true)`, true);
+          break;
+        }
+      }
+    }
+    
+    // If not in quick mode and haven't found paths yet, check additional locations
+    if (!quickMode && (!stopOnFirst || foundPaths.length === 0)) {
+      this.log(`[HostResolver] Checking additional paths (quick mode disabled)`);
       
-      try {
-        const userPath = `/mnt/c/Users/${userDir}`;
-        
-        // Higher priority for users with Claude data
-        const claudePaths = [
-          path.join(userPath, 'AppData', 'Roaming', 'claude'),
-          path.join(userPath, '.claude'),
-          path.join(userPath, '.config', 'claude')
+      if (process.platform === 'win32') {
+        const additionalPaths = [
+          path.join(homedir, 'AppData', 'Local', 'Claude'),
+          path.join(homedir, 'AppData', 'Roaming', 'AnthropicClaude'),
+          path.join(homedir, 'AppData', 'Local', 'AnthropicClaude'),
+          path.join(homedir, 'AppData', 'Roaming', 'claude-code'),
+          path.join(homedir, 'AppData', 'Local', 'claude-code')
         ];
         
-        for (const claudePath of claudePaths) {
-          if (fs.existsSync(claudePath)) {
-            score += 100;
-            // Extra points if it contains projects or actual usage data
-            if (fs.existsSync(path.join(claudePath, 'projects'))) {
-              score += 50;
+        for (const addPath of additionalPaths) {
+          if (this.checkAndAddPath(addPath, paths, foundPaths)) {
+            if (stopOnFirst && foundPaths.length > 0) {
+              break;
             }
           }
         }
-        
-        // Higher priority for users with VS Code data
-        if (fs.existsSync(path.join(userPath, 'AppData', 'Roaming', 'Code'))) {
-          score += 20;
-        }
-        
-        // Higher priority for users with recent activity
-        const stat = fs.statSync(userPath);
-        const daysSinceModified = (Date.now() - stat.mtime.getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSinceModified < 7) {
-          score += 30;
-        } else if (daysSinceModified < 30) {
-          score += 10;
-        }
-        
-        // Lower priority for system/service accounts
-        if (userDir.toLowerCase().includes('system') || 
-            userDir.toLowerCase().includes('service') ||
-            userDir.toLowerCase().includes('admin') ||
-            userDir.startsWith('_')) {
-          score -= 50;
-        }
-        
-        // Higher priority for common personal account names
-        if (userDir.toLowerCase().match(/^[a-z]+$/)) {
-          score += 5;
-        }
-        
-      } catch (error) {
-        // If we can't access the directory, give it very low priority
-        score = -100;
       }
-      
-      prioritized.push({ name: userDir, score });
     }
     
-    // Sort by score (highest first) and return names
-    return prioritized
-      .sort((a, b) => b.score - a.score)
-      .map(item => item.name);
-  }
-
-  private static detectWindowsUsername(): string[] {
-    const detectedUsers: string[] = [];
-    
-    try {
-      // Method 1: Check Windows registry via wslpath
-      const child_process = require('child_process');
-      
-      // Try to get Windows username from whoami.exe if available
-      try {
-        const result = child_process.execSync('cmd.exe /c whoami 2>/dev/null', { 
-          encoding: 'utf8', 
-          timeout: 5000 
-        });
-        const username = result.trim().split('\\').pop();
-        if (username && !detectedUsers.includes(username)) {
-          detectedUsers.push(username);
-        }
-      } catch (error) {
-        // Ignore error, try next method
-      }
-      
-      // Method 2: Parse from Windows environment variables accessible via cmd
-      try {
-        const result = child_process.execSync('cmd.exe /c echo %USERNAME% 2>/dev/null', { 
-          encoding: 'utf8', 
-          timeout: 5000 
-        });
-        const username = result.trim();
-        if (username && username !== '%USERNAME%' && !detectedUsers.includes(username)) {
-          detectedUsers.push(username);
-        }
-      } catch (error) {
-        // Ignore error, try next method
-      }
-      
-      // Method 3: Check for typical Windows user profile patterns
-      try {
-        const windowsUserDir = '/mnt/c/Users';
-        if (fs.existsSync(windowsUserDir)) {
-          const userDirs = fs.readdirSync(windowsUserDir, { withFileTypes: true })
-            .filter(dirent => dirent.isDirectory() && !dirent.name.startsWith('.'))
-            .filter(dirent => !['Default', 'Public', 'All Users'].includes(dirent.name))
-            .map(dirent => dirent.name);
-          
-          // Find users with the most recent VS Code or Claude activity
-          const recentUsers = userDirs
-            .map(userDir => {
-              try {
-                const userPath = `/mnt/c/Users/${userDir}`;
-                const claudePath = path.join(userPath, 'AppData', 'Roaming', 'claude');
-                const vscodePath = path.join(userPath, 'AppData', 'Roaming', 'Code');
-                
-                let lastActivity = 0;
-                if (fs.existsSync(claudePath)) {
-                  lastActivity = Math.max(lastActivity, fs.statSync(claudePath).mtime.getTime());
-                }
-                if (fs.existsSync(vscodePath)) {
-                  lastActivity = Math.max(lastActivity, fs.statSync(vscodePath).mtime.getTime());
-                }
-                
-                return { name: userDir, lastActivity };
-              } catch {
-                return { name: userDir, lastActivity: 0 };
-              }
-            })
-            .filter(user => user.lastActivity > 0)
-            .sort((a, b) => b.lastActivity - a.lastActivity)
-            .slice(0, 2) // Top 2 most recent users
-            .map(user => user.name);
-          
-          detectedUsers.push(...recentUsers.filter(user => !detectedUsers.includes(user)));
-        }
-      } catch (error) {
-        // Ignore error
-      }
-      
-    } catch (error) {
-      console.warn('Could not detect Windows username:', error);
+    // Check manual WSL path if configured
+    const manualWSLPath = this.config.get<string>('wslClaudePath');
+    if (manualWSLPath && manualWSLPath.trim()) {
+      this.log(`[HostResolver] Adding manual WSL path: ${manualWSLPath}`, true);
+      paths.push(manualWSLPath.trim());
     }
     
-    return detectedUsers;
-  }
-
-  private static createLocalEnvironment(): HostEnvironment {
-    const homedir = os.homedir();
+    // Only perform WSL detection if explicitly enabled and on Windows
+    if (process.platform === 'win32' && enableWSL && (!stopOnFirst || foundPaths.length === 0)) {
+      this.log(`[HostResolver] WSL detection enabled, checking WSL paths...`, true);
+      this.detectWSLPaths(paths, foundPaths, stopOnFirst);
+    }
+    
+    this.log(`[HostResolver] Found ${foundPaths.length} valid Claude paths`, true);
     
     return {
       type: 'local',
-      claudePaths: [
-        path.join(homedir, '.claude', 'projects'),
-        path.join(homedir, '.config', 'claude', 'projects')
-      ],
+      claudePaths: paths,
       pathResolver: (relativePath: string) => path.resolve(relativePath)
     };
   }
 
-  private static createWSLEnvironment(): HostEnvironment {
-    const config = vscode.workspace.getConfiguration('ccusage');
-    const wslDistro = config.get<string>('wslDistribution', 'Ubuntu');
+  private static checkAndAddPath(checkPath: string, paths: string[], foundPaths: string[]): boolean {
+    this.log(`[HostResolver] Checking path: ${checkPath}`);
     
-    const claudePaths: string[] = [];
-    
-    // Try to find Windows user directories with enhanced detection
-    try {
-      const windowsUserDir = '/mnt/c/Users';
-      if (fs.existsSync(windowsUserDir)) {
-        const userDirs = fs.readdirSync(windowsUserDir, { withFileTypes: true })
-          .filter(dirent => dirent.isDirectory() && !dirent.name.startsWith('.'))
-          .filter(dirent => !['Default', 'Public', 'All Users'].includes(dirent.name))
-          .map(dirent => dirent.name);
-        
-        // Enhanced user directory prioritization
-        const prioritizedUsers = this.prioritizeWSLUsers(userDirs);
-        
-        // Check each user directory for Claude data
-        for (const userDir of prioritizedUsers) {
-          const userPath = path.join(windowsUserDir, userDir);
-          const candidatePaths = [
-            path.join(userPath, '.claude', 'projects'),
-            path.join(userPath, '.config', 'claude', 'projects'),
-            path.join(userPath, 'AppData', 'Roaming', 'claude', 'projects'),
-            path.join(userPath, 'AppData', 'Local', 'claude', 'projects')
-          ];
+    if (fs.existsSync(checkPath)) {
+      try {
+        const stat = fs.statSync(checkPath);
+        if (stat.isDirectory()) {
+          // Check if it's a projects directory or contains JSONL files
+          const contents = fs.readdirSync(checkPath);
+          const hasProjects = checkPath.endsWith('projects') || contents.some(f => f.endsWith('.jsonl'));
           
-          for (const candidatePath of candidatePaths) {
-            if (fs.existsSync(candidatePath)) {
-              claudePaths.push(candidatePath);
+          if (hasProjects) {
+            this.log(`[HostResolver] ✅ Found valid Claude path: ${checkPath}`, true);
+            paths.push(checkPath);
+            foundPaths.push(checkPath);
+            
+            // If this is a base Claude directory, also check for projects subdirectory
+            if (!checkPath.endsWith('projects')) {
+              const projectsPath = path.join(checkPath, 'projects');
+              if (fs.existsSync(projectsPath)) {
+                this.log(`[HostResolver] ✅ Found projects subdirectory: ${projectsPath}`, true);
+                paths.push(projectsPath);
+                foundPaths.push(projectsPath);
+              }
+            }
+            
+            return true;
+          }
+        }
+      } catch (error: any) {
+        this.log(`[HostResolver] Error checking path: ${error.message}`);
+      }
+    }
+    
+    return false;
+  }
+
+  private static detectWSLPaths(paths: string[], foundPaths: string[], stopOnFirst: boolean) {
+    try {
+      const { execSync } = require('child_process');
+      
+      // Quick check if WSL is available
+      try {
+        execSync('wsl --status', { 
+          encoding: 'utf8',
+          timeout: 1000,
+          windowsHide: true,
+          stdio: 'pipe'
+        });
+      } catch {
+        this.log(`[HostResolver] WSL not available, skipping WSL detection`);
+        return;
+      }
+      
+      // Get default distribution only
+      let defaultDistro = '';
+      try {
+        const result = execSync('wsl -l -v', { 
+          encoding: 'utf8',
+          timeout: 2000,
+          windowsHide: true
+        });
+        
+        const lines = result.split('\n');
+        for (const line of lines) {
+          if (line.includes('*')) {
+            const match = line.match(/\*?\s*([^\s]+)/);
+            if (match && match[1]) {
+              defaultDistro = match[1].replace(/\0/g, '').trim();
+              break;
             }
           }
         }
+      } catch {
+        defaultDistro = 'Ubuntu'; // Fallback
       }
-    } catch (error) {
-      console.warn('Could not access Windows user directories:', error);
-    }
-    
-    // Also check specific environment-based paths with enhanced detection
-    const manualUsername = config.get<string>('wslWindowsUsername');
-    const detectedUsernames = this.detectWindowsUsername();
-    
-    const envBasedPaths = [
-      process.env.USERPROFILE,
-      manualUsername ? `/mnt/c/Users/${manualUsername}` : null,
-      ...detectedUsernames.map(username => `/mnt/c/Users/${username}`),
-      process.env.USERNAME ? `/mnt/c/Users/${process.env.USERNAME}` : null,
-      process.env.USER ? `/mnt/c/Users/${process.env.USER}` : null,
-    ].filter(Boolean) as string[];
-    
-    for (const basePath of envBasedPaths) {
-      if (basePath && fs.existsSync(basePath)) {
-        const candidatePaths = [
-          path.join(basePath, '.claude', 'projects'),
-          path.join(basePath, '.config', 'claude', 'projects'),
-          path.join(basePath, 'AppData', 'Roaming', 'claude', 'projects'),
-          path.join(basePath, 'AppData', 'Local', 'claude', 'projects')
-        ];
-        
-        for (const candidatePath of candidatePaths) {
-          if (fs.existsSync(candidatePath) && !claudePaths.includes(candidatePath)) {
-            claudePaths.push(candidatePath);
+      
+      if (!defaultDistro) return;
+      
+      this.log(`[HostResolver] Checking default WSL distribution: ${defaultDistro}`);
+      
+      // Try the most common WSL paths
+      const wslPaths = [
+        `\\\\wsl$\\${defaultDistro}\\root\\.claude\\projects`,
+        `\\\\wsl.localhost\\${defaultDistro}\\root\\.claude\\projects`
+      ];
+      
+      for (const wslPath of wslPaths) {
+        if (this.checkAndAddPath(wslPath, paths, foundPaths)) {
+          if (stopOnFirst && foundPaths.length > 0) {
+            break;
           }
         }
       }
+      
+    } catch (error) {
+      this.log(`[HostResolver] WSL detection error: ${error}`);
+    }
+  }
+
+  private static createWSLEnvironment(): HostEnvironment {
+    const quickMode = this.config.get<boolean>('quickMode', true);
+    const stopOnFirst = this.config.get<boolean>('stopOnFirstValidPath', true);
+    
+    let wslDistro = this.config.get<string>('wslDistribution', '');
+    if (!wslDistro) {
+      wslDistro = process.env.WSL_DISTRO_NAME || 'Ubuntu';
     }
     
-    // Check Linux home directory in WSL
+    this.log(`[HostResolver] Creating WSL environment for distro: ${wslDistro}`, true);
+    
+    const paths: string[] = [];
+    const foundPaths: string[] = [];
+    
+    // Priority 1: Check Linux home directory in WSL first
     const linuxHome = os.homedir();
     const linuxPaths = [
       path.join(linuxHome, '.claude', 'projects'),
@@ -305,30 +284,87 @@ export class HostResolver {
     ];
     
     for (const linuxPath of linuxPaths) {
-      if (!claudePaths.includes(linuxPath)) {
-        claudePaths.push(linuxPath);
+      if (this.checkAndAddPath(linuxPath, paths, foundPaths)) {
+        if (stopOnFirst && foundPaths.length > 0) {
+          this.log(`[HostResolver] Found valid path, stopping search`, true);
+          break;
+        }
+      }
+    }
+    
+    // Priority 2: Check Windows paths from WSL (only if not in quick mode or no paths found)
+    if (!quickMode && (!stopOnFirst || foundPaths.length === 0)) {
+      try {
+        const windowsUserDir = '/mnt/c/Users';
+        if (fs.existsSync(windowsUserDir)) {
+          // Try to detect current Windows user
+          const manualUsername = this.config.get<string>('wslWindowsUsername');
+          const usernames = manualUsername ? [manualUsername] : this.detectWindowsUsernameSimple();
+          
+          for (const username of usernames) {
+            const userPath = path.join(windowsUserDir, username);
+            const candidatePaths = [
+              path.join(userPath, '.claude', 'projects'),
+              path.join(userPath, 'AppData', 'Roaming', 'Claude', 'projects'),
+              path.join(userPath, 'AppData', 'Roaming', 'Claude')
+            ];
+            
+            for (const candidatePath of candidatePaths) {
+              if (this.checkAndAddPath(candidatePath, paths, foundPaths)) {
+                if (stopOnFirst && foundPaths.length > 0) {
+                  return {
+                    type: 'wsl',
+                    claudePaths: paths,
+                    pathResolver: (relativePath: string) => path.resolve(relativePath)
+                  };
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        this.log(`[HostResolver] Error accessing Windows directories: ${error}`);
       }
     }
     
     return {
       type: 'wsl',
-      claudePaths,
-      pathResolver: (relativePath: string) => {
-        // Handle both Windows and Linux paths in WSL
-        if (relativePath.startsWith('/mnt/c')) {
-          return relativePath;
-        }
-        return path.resolve(relativePath);
-      }
+      claudePaths: paths,
+      pathResolver: (relativePath: string) => path.resolve(relativePath)
     };
   }
 
-  private static createContainerEnvironment(): HostEnvironment {
-    const config = vscode.workspace.getConfiguration('ccusage');
-    const workspaceFolder = config.get<string>('containerWorkspaceFolder');
+  private static detectWindowsUsernameSimple(): string[] {
+    const usernames: string[] = [];
     
-    // In containers, Claude data might be mounted or in the workspace
-    const claudePaths: string[] = [];
+    try {
+      const child_process = require('child_process');
+      
+      // Try to get Windows username
+      try {
+        const result = child_process.execSync('cmd.exe /c echo %USERNAME% 2>/dev/null', { 
+          encoding: 'utf8', 
+          timeout: 2000 
+        });
+        const username = result.trim();
+        if (username && username !== '%USERNAME%') {
+          usernames.push(username);
+        }
+      } catch {
+        // Ignore
+      }
+      
+      // If that fails, just return empty array - user can configure manually
+    } catch {
+      // Ignore
+    }
+    
+    return usernames;
+  }
+
+  private static createContainerEnvironment(): HostEnvironment {
+    const workspaceFolder = this.config.get<string>('containerWorkspaceFolder');
+    const paths: string[] = [];
     
     // Check common mount points
     const mountPoints = [
@@ -339,7 +375,7 @@ export class HostResolver {
     ];
     
     if (workspaceFolder) {
-      mountPoints.push(
+      mountPoints.unshift(
         path.join(workspaceFolder, '.claude', 'projects'),
         path.join(workspaceFolder, '.config', 'claude', 'projects')
       );
@@ -348,18 +384,23 @@ export class HostResolver {
     // Also check current workspace folders
     if (vscode.workspace.workspaceFolders) {
       for (const folder of vscode.workspace.workspaceFolders) {
-        claudePaths.push(
+        mountPoints.unshift(
           path.join(folder.uri.fsPath, '.claude', 'projects'),
           path.join(folder.uri.fsPath, '.config', 'claude', 'projects')
         );
       }
     }
     
-    claudePaths.push(...mountPoints);
+    // Only add paths that exist
+    for (const mountPoint of mountPoints) {
+      if (fs.existsSync(mountPoint)) {
+        paths.push(mountPoint);
+      }
+    }
     
     return {
       type: 'container',
-      claudePaths,
+      claudePaths: paths,
       pathResolver: (relativePath: string) => path.resolve(relativePath)
     };
   }
@@ -377,7 +418,7 @@ export class HostResolver {
           }
         }
       } catch (error) {
-        console.warn(`Cannot access Claude path ${claudePath}:`, error);
+        this.log(`Cannot access Claude path ${claudePath}: ${error}`);
       }
     }
     
@@ -385,16 +426,47 @@ export class HostResolver {
   }
 
   static async showEnvironmentStatus() {
+    // Refresh config
+    this.config = vscode.workspace.getConfiguration('ccusage');
+    this.verboseLogging = this.config.get<boolean>('verboseLogging', false);
+    
     const environment = await this.resolveExecutionHost();
     const validPaths = await this.validateClaudePaths(environment);
     
-    // Additional WSL-specific information
+    // Count JSONL files in valid paths
+    let fileCount = 0;
+    let projectCount = 0;
+    
+    for (const validPath of validPaths) {
+      try {
+        const entries = fs.readdirSync(validPath, { withFileTypes: true });
+        const projects = entries.filter(e => e.isDirectory());
+        projectCount += projects.length;
+        
+        for (const project of projects) {
+          const projectPath = path.join(validPath, project.name);
+          const files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl'));
+          fileCount += files.length;
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+    }
+    
+    // Get current settings
+    const settings = [
+      `Quick Mode: ${this.config.get<boolean>('quickMode', true) ? 'Enabled' : 'Disabled'}`,
+      `WSL Detection: ${this.config.get<boolean>('enableWSLDetection', false) ? 'Enabled' : 'Disabled'}`,
+      `Stop on First: ${this.config.get<boolean>('stopOnFirstValidPath', true) ? 'Yes' : 'No'}`,
+      `Verbose Logging: ${this.config.get<boolean>('verboseLogging', false) ? 'Enabled' : 'Disabled'}`
+    ];
+    
+    // Additional environment-specific information
     let additionalInfo = '';
     if (environment.type === 'wsl') {
       const wslInfo = [
         `WSL Distribution: ${process.env.WSL_DISTRO_NAME || 'Unknown'}`,
-        `Linux Home: ${require('os').homedir()}`,
-        `Windows Users accessible: ${require('fs').existsSync('/mnt/c/Users') ? 'Yes' : 'No'}`
+        `Linux Home: ${os.homedir()}`
       ];
       additionalInfo = '\n\nWSL Details:\n' + wslInfo.map(info => `  ${info}`).join('\n');
     }
@@ -402,9 +474,14 @@ export class HostResolver {
     const statusMessage = [
       `Environment: ${environment.type.toUpperCase()}`,
       `Valid Claude paths found: ${validPaths.length}`,
+      `Projects found: ${projectCount}`,
+      `JSONL files found: ${fileCount}`,
       '',
-      'Searched paths:',
-      ...environment.claudePaths.map(p => `  ${validPaths.includes(p) ? '✅' : '❌'} ${p}`),
+      'Current Settings:',
+      ...settings.map(s => `  ${s}`),
+      '',
+      'Valid paths:',
+      ...validPaths.map(p => `  ✅ ${p}`),
       additionalInfo
     ].join('\n');
     

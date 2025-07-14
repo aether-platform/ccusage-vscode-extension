@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ClaudeTranscriptEntry } from './types';
+import { HostResolver } from './hostResolver';
 
 export class JSONLParser {
   private processedEntries = new Set<string>();
@@ -97,11 +98,20 @@ export class JSONLParser {
     this.processedEntries.clear();
   }
 
-  static getDefaultClaudePaths(): string[] {
-    const homedir = require('os').homedir();
-    return [
-      path.join(homedir, '.claude', 'projects'),
-      path.join(homedir, '.config', 'claude', 'projects')
-    ];
+  static async getDefaultClaudePaths(): Promise<string[]> {
+    try {
+      const environment = await HostResolver.resolveExecutionHost();
+      const validPaths = await HostResolver.validateClaudePaths(environment);
+      console.log(`[Parser] Found ${validPaths.length} valid Claude paths:`, validPaths);
+      return validPaths;
+    } catch (error) {
+      console.error('[Parser] Error resolving Claude paths:', error);
+      // Fallback to simple homedir method
+      const homedir = require('os').homedir();
+      return [
+        path.join(homedir, '.claude', 'projects'),
+        path.join(homedir, '.config', 'claude', 'projects')
+      ];
+    }
   }
 }
